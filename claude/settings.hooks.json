@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.agents/hooks/claude/style-reminder.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
