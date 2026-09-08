@@ -3,6 +3,9 @@
 
   render.py claude   -> `claude mcp add-json` commands (user scope)
   render.py codex    -> TOML fragment for ~/.codex/config.toml [mcp_servers.*]
+  render.py codex --apply -> writes that fragment into ~/.codex/config.toml inside a
+                             "# BEGIN/END agents-managed" block (servers already defined
+                             elsewhere in the file are left alone, block is replaced on re-run)
   render.py gemini   -> merges into ~/.gemini/settings.json "mcpServers" (or prints if absent)
 
 Secrets come from mcp/secrets.env as ${VAR}; unset vars leave the server out with a warning.
@@ -49,22 +52,46 @@ if target == "claude":
         print(f"claude mcp add-json --scope user {shlex.quote(name)} {shlex.quote(json.dumps(cfg))}")
 
 elif target == "codex":
+    import io, tomllib
+    path = os.path.expanduser("~/.codex/config.toml")
+    apply = "--apply" in sys.argv
+    existing = open(path).read() if os.path.exists(path) else ""
+    BEGIN, END = "# BEGIN agents-managed (mcp/render.py codex --apply)", "# END agents-managed"
+    if BEGIN in existing and END in existing:
+        head, rest = existing.split(BEGIN, 1)
+        unmanaged = head + rest.split(END, 1)[1]
+    else:
+        unmanaged = existing
+    already = set(tomllib.loads(unmanaged).get("mcp_servers", {})) if unmanaged.strip() else set()
+    skip = already | {"slack"}  # slack: Codex has its own plugin
+    buf = io.StringIO()
     for name, cfg in servers.items():
-        print(f"[mcp_servers.{name}]")
+        if name in skip:
+            print(f"# {name}: already in config.toml outside the managed block (or plugin), skipped", file=sys.stderr)
+            continue
+        print(f"[mcp_servers.{name}]", file=buf)
         if cfg["type"] == "http":
-            print(f'url = "{cfg["url"]}"')
+            print(f'url = "{cfg["url"]}"', file=buf)
             if cfg.get("headers"):
-                print(f"[mcp_servers.{name}.http_headers]")
+                print(f"[mcp_servers.{name}.http_headers]", file=buf)
                 for k, v in cfg["headers"].items():
-                    print(f'{k} = "{v}"')
+                    print(f'{k} = "{v}"', file=buf)
         else:
-            print(f'command = "{cfg["command"]}"')
-            print(f'args = {json.dumps(cfg.get("args", []))}')
+            print(f'command = "{cfg["command"]}"', file=buf)
+            print(f'args = {json.dumps(cfg.get("args", []))}', file=buf)
             if cfg.get("env"):
-                print(f"[mcp_servers.{name}.env]")
+                print(f"[mcp_servers.{name}.env]", file=buf)
                 for k, v in cfg["env"].items():
-                    print(f'{k} = "{v}"')
-        print()
+                    print(f'{k} = "{v}"', file=buf)
+        print(file=buf)
+    fragment = buf.getvalue()
+    if not apply:
+        print(fragment, end="")
+    else:
+        merged = unmanaged.rstrip("\n") + "\n\n" + BEGIN + "\n" + fragment + END + "\n"
+        tomllib.loads(merged)  # refuse to write invalid TOML
+        open(path, "w").write(merged)
+        print(f"wrote managed block with {fragment.count('[mcp_servers.')-fragment.count('.env]')-fragment.count('.http_headers]')} servers into {path}")
 
 elif target == "gemini":
     out = {}

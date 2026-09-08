@@ -6,8 +6,9 @@ One home for everything I want every coding agent to share: instructions, skills
 |---|---|---|---|---|
 | Instructions | `AGENTS.md` | `~/.claude/CLAUDE.md` imports it | `~/.codex/AGENTS.md` symlink | `~/.gemini/AGENTS.md` + `context.fileName` |
 | Skills | `skills/` (open Agent Skills format) | `~/.claude/skills` symlink | reads `~/.agents/skills` natively | `~/.gemini/skills` symlink |
-| Hooks | `hooks/<tool>/` | `claude/settings.hooks.json` snippet | n/a | n/a |
-| MCP servers | `mcp/servers.json` + gitignored `mcp/secrets.env` | `mcp/render.py claude \| sh` | `mcp/render.py codex` | `mcp/render.py gemini` |
+| Hooks | `hooks/<tool>/` | `claude/settings.hooks.json` snippet | n/a (voice via AGENTS.md) | n/a |
+| Permission rules | `codex/default.rules` | n/a (settings.json) | `~/.codex/rules` symlink | n/a |
+| MCP servers | `mcp/servers.json` + gitignored `mcp/secrets.env` | `mcp/render.py claude \| sh` | `mcp/render.py codex --apply` | `mcp/render.py gemini` |
 
 Fresh machine: clone to `~/.agents`, copy `mcp/secrets.env.example` to `mcp/secrets.env` and fill it, run `./install.sh`.
 

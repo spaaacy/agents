@@ -11,6 +11,9 @@ echo "Claude hooks: merge claude/settings.hooks.json into ~/.claude/settings.jso
 
 # Codex (reads ~/.agents/skills natively)
 link "$A/AGENTS.md" "$HOME/.codex/AGENTS.md"
+link "$A/codex" "$HOME/.codex/rules"
+grep -q "^skills = true" "$HOME/.codex/config.toml" 2>/dev/null || printf "\n[features]\nskills = true\n" >> "$HOME/.codex/config.toml"
+python3 "$A/mcp/render.py" codex --apply
 
 # Gemini CLI
 if [ -d "$HOME/.gemini" ]; then
@@ -27,4 +30,4 @@ PY
 fi
 
 echo "MCP for Claude:  $A/mcp/render.py claude | sh"
-echo "MCP for Codex:   $A/mcp/render.py codex   (paste into ~/.codex/config.toml)"
+
