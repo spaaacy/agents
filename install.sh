@@ -12,7 +12,8 @@ command -v claude >/dev/null && python3 "$A/mcp/render.py" claude --apply
 
 # Codex (reads ~/.agents/skills natively)
 link "$A/AGENTS.md" "$HOME/.codex/AGENTS.md"
-link "$A/codex" "$HOME/.codex/rules"
+link "$A/codex/rules" "$HOME/.codex/rules"
+link "$A/codex/hooks.json" "$HOME/.codex/hooks.json"
 grep -q "^skills = true" "$HOME/.codex/config.toml" 2>/dev/null || printf "\n[features]\nskills = true\n" >> "$HOME/.codex/config.toml"
 python3 "$A/mcp/render.py" codex --apply
 
