@@ -69,7 +69,7 @@ if target == "claude":
 
 elif target == "codex":
     import io, tomllib
-    path = os.path.expanduser("~/.codex/config.toml")
+    path = os.path.join(os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex")), "config.toml")
     apply = "--apply" in sys.argv
     existing = open(path).read() if os.path.exists(path) else ""
     BEGIN, END = "# BEGIN agents-managed (mcp/render.py codex --apply)", "# END agents-managed"

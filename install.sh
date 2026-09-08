@@ -1,24 +1,29 @@
 #!/bin/bash
 # Wire this repo into Claude Code, Codex, and Gemini CLI. Idempotent.
 set -e
+target="${1:-all}"
+case "$target" in all|codex) ;; *) echo "usage: $0 [all|codex]" >&2; exit 2 ;; esac
 A="$HOME/.agents"
-link() { [ -L "$2" ] && [ "$(readlink "$2")" = "$1" ] && return; [ -e "$2" ] && { echo "exists, not touching: $2"; return; }; mkdir -p "$(dirname "$2")"; ln -s "$1" "$2"; echo "linked $2 -> $1"; }
+link() { [ -L "$2" ] && [ "$(readlink "$2")" = "$1" ] && return; { [ -e "$2" ] || [ -L "$2" ]; } && { echo "exists, not touching: $2"; return; }; mkdir -p "$(dirname "$2")"; ln -s "$1" "$2"; echo "linked $2 -> $1"; }
 
 # Claude Code
+if [ "$target" = all ]; then
 link "$A/skills"          "$HOME/.claude/skills"
 link "$A/claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
 python3 "$A/claude/apply.py"
 command -v claude >/dev/null && python3 "$A/mcp/render.py" claude --apply
+fi
 
 # Codex (reads ~/.agents/skills natively)
-link "$A/AGENTS.md" "$HOME/.codex/AGENTS.md"
-link "$A/codex/rules" "$HOME/.codex/rules"
-link "$A/codex/hooks.json" "$HOME/.codex/hooks.json"
-grep -q "^skills = true" "$HOME/.codex/config.toml" 2>/dev/null || printf "\n[features]\nskills = true\n" >> "$HOME/.codex/config.toml"
+codex_dir="${CODEX_HOME:-$HOME/.codex}"
+link "$A/AGENTS.md" "$codex_dir/AGENTS.md"
+link "$A/codex/rules" "$codex_dir/rules"
+link "$A/codex/hooks.json" "$codex_dir/hooks.json"
+python3 "$A/codex/apply.py"
 python3 "$A/mcp/render.py" codex --apply
 
 # Gemini CLI
-if [ -d "$HOME/.gemini" ]; then
+if [ "$target" = all ] && [ -d "$HOME/.gemini" ]; then
   link "$A/skills" "$HOME/.gemini/skills"
   python3 - <<'PY'
 import json, os
@@ -30,5 +35,4 @@ PY
   link "$A/AGENTS.md" "$HOME/.gemini/AGENTS.md"
   python3 "$A/mcp/render.py" gemini
 fi
-
 
