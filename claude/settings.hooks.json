@@ -9,6 +9,15 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.agents/hooks/claude/brainrot.sh",
+            "timeout": 5
+          }
+        ]
       }
     ]
   }
