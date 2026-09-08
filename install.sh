@@ -7,7 +7,8 @@ link() { [ -L "$2" ] && [ "$(readlink "$2")" = "$1" ] && return; [ -e "$2" ] && 
 # Claude Code
 link "$A/skills"          "$HOME/.claude/skills"
 link "$A/claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
-echo "Claude hooks: merge claude/settings.hooks.json into ~/.claude/settings.json (see README)"
+python3 "$A/claude/apply.py"
+command -v claude >/dev/null && python3 "$A/mcp/render.py" claude --apply
 
 # Codex (reads ~/.agents/skills natively)
 link "$A/AGENTS.md" "$HOME/.codex/AGENTS.md"
@@ -29,5 +30,4 @@ PY
   python3 "$A/mcp/render.py" gemini
 fi
 
-echo "MCP for Claude:  $A/mcp/render.py claude | sh"
 

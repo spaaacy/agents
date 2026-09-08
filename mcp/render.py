@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Render mcp/servers.json into each tool's format.
 
-  render.py claude   -> `claude mcp add-json` commands (user scope)
+  render.py claude   -> `claude mcp add-json` commands (user scope); --apply runs them,
+                        skipping servers Claude already has in any scope, plugins, and connectors
   render.py codex    -> TOML fragment for ~/.codex/config.toml [mcp_servers.*]
   render.py codex --apply -> writes that fragment into ~/.codex/config.toml inside a
                              "# BEGIN/END agents-managed" block (servers already defined
@@ -48,8 +49,23 @@ for name, cfg in json.load(open(os.path.join(HERE, "servers.json"))).items():
 target = sys.argv[1] if len(sys.argv) > 1 else "claude"
 
 if target == "claude":
+    import subprocess
+    apply = "--apply" in sys.argv
+    state_path = os.path.expanduser("~/.claude.json")
+    state = json.load(open(state_path)) if os.path.exists(state_path) else {}
+    have = set(state.get("mcpServers", {}))
+    for proj in state.get("projects", {}).values():
+        have |= set(proj.get("mcpServers", {}))
+    skip = have | {"slack", "datadog", "linear-server"}  # claude.ai connector / plugin / project alias
     for name, cfg in servers.items():
-        print(f"claude mcp add-json --scope user {shlex.quote(name)} {shlex.quote(json.dumps(cfg))}")
+        if name in skip:
+            print(f"# {name}: already configured in Claude (some scope, plugin, or connector), skipped", file=sys.stderr)
+            continue
+        cmd = ["claude", "mcp", "add-json", "--scope", "user", name, json.dumps(cfg)]
+        if apply:
+            subprocess.run(cmd, check=True)
+        else:
+            print(" ".join(shlex.quote(c) for c in cmd))
 
 elif target == "codex":
     import io, tomllib
