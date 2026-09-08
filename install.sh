@@ -36,3 +36,6 @@ PY
   python3 "$A/mcp/render.py" gemini
 fi
 
+# Finish all local writes before reporting any remaining account setup.
+echo "Local installation finished. Checking declared Codex plugin connections..."
+python3 "$A/codex/check_connections.py"

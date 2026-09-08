@@ -51,6 +51,7 @@ Do not use it for refactoring, writing scripts from scratch, debugging business 
 
 ## Tools
 
+- For connection audits, distinguish local configuration, account installation/sign-in, and tools exposed in the current session. An enabled flag or cached plugin directory is not proof that tools are available. Run `python3 ~/.agents/codex/check_connections.py` for the repo's declared Codex plugin connections; it checks a fresh runtime, so verify the current session's tool inventory separately. Do not claim a connection is ready from configuration alone, or ask the user to resend a link that is already in the conversation.
 - Database access goes through the `pg-readonly` MCP server, never by running `~/dev/pg-readonly-mcp` directly. It picks a saved connection from Agent Observatory by `PG_CONNECTION`; the MCP config pins `prod`. prod is an ssh tunnel on localhost:54321, staging on localhost:54320. "connection refused" on either port means that tunnel is down, not that the server is broken.
 - Library and framework questions go to Context7 (above). Linear is the ticket system; Datadog is observability; Notion holds team docs.
 - Any `az` command against Azure needs explicit approval in the conversation first, even read-only ones.

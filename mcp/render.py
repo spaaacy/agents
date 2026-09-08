@@ -59,7 +59,8 @@ if target == "claude":
     skip = have | {"slack", "datadog", "linear-server"}  # claude.ai connector / plugin / project alias
     for name, cfg in servers.items():
         if name in skip:
-            print(f"# {name}: already configured in Claude (some scope, plugin, or connector), skipped", file=sys.stderr)
+            reason = "present in local Claude config; account access unverified" if name in have else "delegated to a Claude connector/plugin; account access unverified"
+            print(f"# {name}: {reason}. Check the connection in Claude.", file=sys.stderr)
             continue
         cmd = ["claude", "mcp", "add-json", "--scope", "user", name, json.dumps(cfg)]
         if apply:
@@ -79,11 +80,16 @@ elif target == "codex":
     else:
         unmanaged = existing
     already = set(tomllib.loads(unmanaged).get("mcp_servers", {})) if unmanaged.strip() else set()
-    skip = already | {"slack"}  # slack: Codex has its own plugin
+    # Declare plugin routes explicitly; a route is not proof of installation or sign-in.
+    plugin_connections = json.load(open(os.path.join(HERE, "..", "codex", "connections.json")))
     buf = io.StringIO()
     for name, cfg in servers.items():
-        if name in skip:
-            print(f"# {name}: already in config.toml outside the managed block (or plugin), skipped", file=sys.stderr)
+        if name in already:
+            print(f"# {name}: present outside the managed block; account access unverified.", file=sys.stderr)
+            continue
+        if name in plugin_connections:
+            plugin = plugin_connections[name]["plugin"]
+            print(f"# {name}: delegated to {plugin}; installation and sign-in are not verified by rendering config. Run python3 ~/.agents/codex/check_connections.py.", file=sys.stderr)
             continue
         print(f"[mcp_servers.{name}]", file=buf)
         if cfg["type"] == "http":

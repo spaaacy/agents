@@ -1,0 +1,7 @@
+{
+  "slack": {
+    "name": "Slack",
+    "plugin": "slack@openai-curated",
+    "app_id": "asdk_app_69a1d78e929881919bba0dbda1f6436d"
+  }
+}
