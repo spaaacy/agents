@@ -130,20 +130,43 @@ class SessionTitleTests(unittest.TestCase):
         for base in ("development", "main", "staging", "HEAD", None):
             self.assertIsNone(titles.dev_title(base, lambda: "2468"))
 
-    def test_review_title_from_prompt_targets(self):
+    def test_command_title_from_prompt_targets(self):
         pr = lambda: "77"
-        self.assertEqual(titles.review_title("/review 2468", "x", pr), "review: #2468")
-        self.assertEqual(titles.review_title("/review #2468 quickly", "x", pr), "review: #2468")
+        self.assertEqual(titles.command_title("/review 2468", "x", pr), "review: #2468")
+        self.assertEqual(titles.command_title("/watch #2468 quickly", "x", pr), "watch: #2468")
         self.assertEqual(
-            titles.review_title("/review https://github.com/o/r/pull/12", "x", pr), "review: #12"
+            titles.command_title("/review https://github.com/o/r/pull/12", "x", pr), "review: #12"
         )
-        self.assertEqual(titles.review_title("/review myles/eng-1-x", "x", pr), "review: myles/eng-1-x")
-        self.assertEqual(titles.review_title("/review", "aakif/eng-2029", pr), "review: #77")
-        self.assertEqual(titles.review_title("/review", "aakif/eng-2029", lambda: None), "review: ENG-2029")
-        self.assertIsNone(titles.review_title("/review", "development", lambda: None))
-        self.assertIsNone(titles.review_title("please /review 2468", "x", pr))
-        self.assertIsNone(titles.review_title("/reviewer 2468", "x", pr))
-        self.assertIsNone(titles.review_title("hello", "x", pr))
+        self.assertEqual(titles.command_title("/review myles/eng-1-x", "x", pr), "review: myles/eng-1-x")
+        self.assertEqual(titles.command_title("/watch", "aakif/eng-2029", pr), "watch: #77")
+        self.assertEqual(titles.command_title("/review", "aakif/eng-2029", lambda: None), "review: ENG-2029")
+        self.assertIsNone(titles.command_title("/review", "development", lambda: None))
+        self.assertIsNone(titles.command_title("please /review 2468", "x", pr))
+        self.assertIsNone(titles.command_title("/reviewer 2468", "x", pr))
+        self.assertIsNone(titles.command_title("hello", "x", pr))
+
+    def test_prompt_ticket_only_when_branch_has_none(self):
+        self.assertEqual(titles.prompt_ticket_title("implement ENG-2100 pls", "development"), "dev: ENG-2100")
+        self.assertEqual(titles.prompt_ticket_title("eng-7 and ENG-8", None), "dev: ENG-7")
+        self.assertIsNone(titles.prompt_ticket_title("implement ENG-2100", "aakif/eng-2029-x"))
+        self.assertIsNone(titles.prompt_ticket_title("no ticket here", "development"))
+
+    def test_repo_suffix_only_off_the_backend(self):
+        self.assertEqual(titles.with_repo("dev: ENG-1", "web"), "dev: ENG-1 · web")
+        self.assertEqual(titles.with_repo("dev: ENG-1", None), "dev: ENG-1")
+        self.assertIsNone(titles.with_repo(None, "web"))
+        self.assertIsNone(titles.REPO_LABELS["envoyai-backend"])
+        self.assertEqual(titles.REPO_LABELS["envoyai-chrome-plugin"], "plugin")
+
+    def test_marker_gates_prompt_ticket_once_per_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            titles.MARKERS = Path(tmp) / "markers"
+            self.assertFalse(titles.already_titled("s1"))
+            titles.mark_titled("s1")
+            self.assertTrue(titles.already_titled("s1"))
+            self.assertFalse(titles.already_titled("s2"))
+            self.assertFalse(titles.already_titled(None))
+            titles.mark_titled(None)  # no session id: no marker, no error
 
     def test_hooks_are_wired_for_claude(self):
         wired = json.loads((ROOT / "claude/settings.hooks.json").read_text())["hooks"]
