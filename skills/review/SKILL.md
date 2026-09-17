@@ -8,7 +8,7 @@ Review $ARGUMENTS. A PR number or PR URL means `gh pr view` + `gh pr diff` (both
 This is the author's own review before the PR goes up. The reader wrote the code with AI assistance and is worried about product changes slipping in unnoticed, so be blunt, lead with behavior, and never soften a finding because the author is the reader.
 
 ## 1. Context
-Find the ticket (Linear key in the branch name, commits, or PR body) and write down in one paragraph what was asked. Read the whole diff, then the code around it: callers and callees of every changed symbol, the tests covering them, sibling code that solves a similar problem (the baseline for "how this codebase does it"), and git log on the touched files. Read the rules: `REVIEW.md` at the repo root if present, and every `CLAUDE.md` from the root down to the changed paths. Check the branch merges cleanly against its base.
+Find the ticket (Linear key in the branch name, commits, or PR body) and write down in one paragraph what was asked. Read the whole diff, then the code around it: callers and callees of every changed symbol, the tests covering them, sibling code that solves a similar problem (the baseline for "how this codebase does it"), and git log on the touched files. Read the rules: the repo's file under `repos/` next to this skill, named after the origin remote's repository (`basename -s .git "$(git remote get-url origin)"`, e.g. `repos/envoyai-backend.md`; this works from a linked worktree too), a `REVIEW.md` at the repo root if one exists, and every `CLAUDE.md` from the root down to the changed paths. No `repos/` file for this remote is fine; do not create one. Check the branch merges cleanly against its base.
 
 ## 2. Product review (report these first)
 In this priority order:
@@ -24,7 +24,7 @@ In this priority order:
 ## 3. Engineering review
 In this priority order:
 
-1. **Repo doctrine.** Quotable violations of `REVIEW.md` / `CLAUDE.md`, and any rule sentence the change makes stale.
+1. **Repo doctrine.** Quotable violations of the repo's `repos/<name>.md` rules / `CLAUDE.md`, and any rule sentence the change makes stale.
 2. **Correctness.** Logic errors, edge cases, error and retry paths, transaction and concurrency boundaries, fail-open defaults, nullable misuse, unsafe casts, stringly-typed logic where a typed construct exists.
 3. **Tests that would fail.** Changed behavior with no test that regresses if it breaks; pins that no longer test anything; mocks that make a test pass vacuously. Run the touched modules' tests if cheap.
 4. **Mergeability.** Behind base, conflicts whose resolution would silently revert a sibling change, migration head forks.
