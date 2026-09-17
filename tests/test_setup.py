@@ -117,3 +117,38 @@ class HookTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+titles = module("session_title", ROOT / "hooks/session_title.py")
+
+
+class SessionTitleTests(unittest.TestCase):
+    def test_dev_title_prefers_ticket_then_pr_then_nothing(self):
+        self.assertEqual(titles.dev_title("aakif/eng-2029-tms-reply", lambda: "9"), "dev: ENG-2029")
+        self.assertEqual(titles.dev_title("feature/no-ticket", lambda: "2468"), "dev: #2468")
+        self.assertIsNone(titles.dev_title("feature/no-ticket", lambda: None))
+        for base in ("development", "main", "staging", "HEAD", None):
+            self.assertIsNone(titles.dev_title(base, lambda: "2468"))
+
+    def test_review_title_from_prompt_targets(self):
+        pr = lambda: "77"
+        self.assertEqual(titles.review_title("/review 2468", "x", pr), "review: #2468")
+        self.assertEqual(titles.review_title("/review #2468 quickly", "x", pr), "review: #2468")
+        self.assertEqual(
+            titles.review_title("/review https://github.com/o/r/pull/12", "x", pr), "review: #12"
+        )
+        self.assertEqual(titles.review_title("/review myles/eng-1-x", "x", pr), "review: myles/eng-1-x")
+        self.assertEqual(titles.review_title("/review", "aakif/eng-2029", pr), "review: #77")
+        self.assertEqual(titles.review_title("/review", "aakif/eng-2029", lambda: None), "review: ENG-2029")
+        self.assertIsNone(titles.review_title("/review", "development", lambda: None))
+        self.assertIsNone(titles.review_title("please /review 2468", "x", pr))
+        self.assertIsNone(titles.review_title("/reviewer 2468", "x", pr))
+        self.assertIsNone(titles.review_title("hello", "x", pr))
+
+    def test_hooks_are_wired_for_claude(self):
+        wired = json.loads((ROOT / "claude/settings.hooks.json").read_text())["hooks"]
+        commands = {h["command"] for entries in wired.values() for e in entries for h in e["hooks"]}
+        self.assertIn("~/.agents/hooks/session-title-start.sh", commands)
+        self.assertIn("~/.agents/hooks/session-title-prompt.sh", commands)
+        self.assertEqual([h["command"] for e in wired["SessionStart"] for h in e["hooks"]],
+                         ["~/.agents/hooks/session-title-start.sh"])

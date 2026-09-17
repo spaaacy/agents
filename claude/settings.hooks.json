@@ -18,6 +18,26 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.agents/hooks/session-title-prompt.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.agents/hooks/session-title-start.sh",
+            "timeout": 10
+          }
+        ]
       }
     ]
   }

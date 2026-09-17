@@ -8,6 +8,7 @@ One home for everything I want every coding agent to share: instructions, skills
 | Skills | `skills/` (open Agent Skills format) | `~/.claude/skills` symlink | reads `~/.agents/skills` natively | `~/.gemini/skills` symlink |
 | Hooks | `hooks/*.sh` (same scripts everywhere) | `claude/apply.py` merges `claude/settings.hooks.json` | `~/.codex/hooks.json` symlink | n/a |
 | Permission rules | `codex/rules/default.rules`, `claude/permissions.json` | `claude/apply.py` merges | `~/.codex/rules` symlink | n/a |
+| Session titles | `hooks/session_title.py` (`dev: <ticket\|#PR>` from the branch at start, `review: <#PR\|branch>` on `/review`) | `claude/apply.py` merges the SessionStart + UserPromptSubmit hooks | n/a (no session titles) | n/a |
 | MCP servers | `mcp/servers.json` + gitignored `mcp/secrets.env` | `mcp/render.py claude --apply` | `mcp/render.py codex --apply` | `mcp/render.py gemini` |
 
 Fresh machine: clone to `~/.agents`, copy `mcp/secrets.env.example` to `mcp/secrets.env` and fill it, run `./install.sh`.
