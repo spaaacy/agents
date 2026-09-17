@@ -5,7 +5,13 @@ description: Clean up the local dev machine - stale git worktrees and branches, 
 
 Scope: $ARGUMENTS if given (`worktrees`, `databases`, `migrations`, or a repo path), else everything, for the repo in the current directory (defaults to envoyai-backend; the worktree pass also covers envoyai-web, envoyai-chrome-plugin, envoyai-chat-ui).
 
-Two phases. **Phase 1 is read-only and always runs**: gather the facts below and print one plain-English report with a numbered list of proposed actions. **Phase 2 runs only the actions the user approves by number (or "all")**. Never delete a worktree with uncommitted changes, never drop a database, never `down -v`, and never force anything without that approval. Say what you did not check.
+Two phases. **Phase 1 always runs and changes nothing except the step 0 sync**: gather the facts below and print one plain-English report with a numbered list of proposed actions. **Phase 2 runs only the actions the user approves by number (or "all")**. Never delete a worktree with uncommitted changes, never drop a database, never `down -v`, and never force anything without that approval. Say what you did not check.
+
+## 0. Fetch and pull latest
+
+Do this first, for each repo in scope (backend, web, chrome-plugin, chat-ui main checkouts): `git -C <repo> fetch --prune origin`, then fast-forward the main checkout with `git -C <repo> pull --ff-only origin development`, but only when it is on `development` and `git status --porcelain --untracked-files=no` is empty (untracked files are fine). If it is on another branch, has tracked changes, or the fast-forward is refused, do not pull; note it in the report with how far behind it is (`git rev-list --count development..origin/development`). Never merge, rebase, or stash to make a pull work. Print `<repo>: <old sha> → <new sha>` per repo.
+
+This must happen before step 3: the api container runs the backend checkout's code, so `alembic heads` only sees migrations the checkout has pulled. It also makes every "merged into origin/development" check below read the current remote.
 
 ## 1. Worktrees and branches
 
@@ -56,6 +62,8 @@ Finish by re-running the stamp/head check and printing before → after.
 ## Report shape
 
 ```
+Synced
+  envoyai-backend 151fa7250 → 8bb16a997; envoyai-web up to date; envoyai-chat-ui not pulled (on aakif/x, 3 behind)
 Worktrees
   keep     <path> (<branch>, dirty: 3 files / PR #123 open)
   1. remove <path> (<branch>, merged in #456)
