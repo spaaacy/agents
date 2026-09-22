@@ -40,7 +40,7 @@ gh api repos/envoy-ai/<repo>/compare/production...staging --jq '{ahead: .ahead_b
 - Something already mid-deploy (an open `staging -> production` PR, a running build or deploy run): adopt that stage for that repo instead of starting over, and say so. If the adopted state is past GO 1's work, skip straight to waiting for GO 2.
 - A repo with no open release PR and nothing ahead of staging is skipped for the day. A repo with commits ahead of staging but no release PR means release-please found nothing releasable (chore/docs/ci only); it can still be promoted to staging but its production PR will fail the release gate, so say that and leave it out unless the user includes it.
 - Show what ships: per repo the release PR title (the version) and the commit subjects ahead of staging.
-- Approved but unmerged PRs into `development`, per repo: `gh pr list -R envoy-ai/<repo> --base development --state open --json number,title,author,reviewDecision,isDraft,mergeable,url --jq '.[] | select(.reviewDecision == "APPROVED" and .isDraft == false)'`. Skip the release-please PR itself. List them with their authors; they become the nudge in GO 1 so nobody's approved work misses the train by an hour.
+- PRs into `development` that look due to merge, per repo: `gh pr list -R envoy-ai/<repo> --base development --state open --json number,title,author,reviewDecision,isDraft,mergeable,statusCheckRollup,updatedAt,url`. Keep every non-draft PR that is approved, whatever its checks say (a red check with an approval usually means the author is fixing CI to ship today), plus any non-draft PR updated in the last 24 hours with green checks and no changes requested. Skip the release-please PR itself. List each with author, review state and check state (`approved, Eval sample red`); they become the nudge in GO 1 so nobody's near-done work misses the train by an hour.
 
 ## 1. Propose GO 1: ship to staging
 
@@ -48,7 +48,7 @@ One proposal, in this shape:
 
 ```
 GO 1 would, in order:
-  post #devs nudge for approved-unmerged PRs: backend #2497 (@Myles), web #702 (@Kaushik); then wait up to 20 min for merges or replies
+  post #devs nudge for PRs due to merge: backend #2389 (@Saumil, approved, Eval sample red), web #702 (@Kaushik, approved, green); hold until each is merged, declared out, or 20 min pass with no answer
   post #devs: "Starting deploy: backend v1.62.0, web v1.53.0, plugin v1.22.0. Staging first, prod once stamped."
   approve + squash-merge release PRs: backend #2535 (a1b2c3d), web #705 (e4f5a6b), plugin #253 (c7d8e9f)
   merge dev->staging PRs once checks pass (backend #2537 exists; web and plugin: trigger staging-promotion.yml and wait for the PR)
@@ -57,7 +57,7 @@ GO 1 would, in order:
 Reply GO to run all of it, or name what to drop.
 ```
 
-No approved-unmerged PRs: the nudge line is omitted and there is no wait. The release PRs are named by number, not sha: a PR merged during the nudge window makes release-please rewrite its PR (new version, new changelog), so the head sha is read at merge time and reported then.
+No PRs due to merge: the nudge line is omitted and there is no wait. The release PRs are named by number, not sha: a PR merged during the nudge window makes release-please rewrite its PR (new version, new changelog), so the head sha is read at merge time and reported then.
 
 The stamps post always opens with `@here`; the skill never asks who to tag and never tags individuals unless the user names them in the GO reply. Then stop and wait.
 
@@ -65,7 +65,7 @@ The stamps post always opens with `@here`; the skill never asks who to tag and n
 
 Each item runs on a tick when its precondition is met; ticks in between report progress.
 
-- Nudge (section 6, message 0), one post listing every approved-unmerged PR with its author tagged. Resolve each GitHub login to a Slack user by the name on their GitHub profile (`gh api users/<login> --jq .name`, then Slack user search); an unresolved login is written as plain text. Then hold the release merges until every listed PR is merged or closed, or its author replied in the thread, or 20 minutes passed, whichever comes first. A PR merged in the window changes what ships: re-read the release PR (new version, new head) and say so in the next tick.
+- Nudge (section 6, message 0), one post listing every PR due to merge with its author tagged. Resolve each GitHub login to a Slack user by the name on their GitHub profile (`gh api users/<login> --jq .name`, then Slack user search); an unresolved login is written as plain text. Then hold the release merges per PR: merged or closed, or the author says it is out, releases the hold; the author saying it is in ("yes", "merging", "give me 10") keeps the hold until it merges, up to 60 minutes, after which the skill reports and asks the user whether to keep waiting; no answer at all releases the hold after 20 minutes. Read the thread replies each tick (Slack thread read tool). A PR merged in the window changes what ships: re-read the release PR (new version, new head) and say so in the next tick.
 - Release PRs (`chore(development): release X.Y.Z` by `app/github-actions`, one per repo; `development` needs one approval and the bot authored it):
 
 ```
@@ -93,6 +93,10 @@ gh pr create -R envoy-ai/<repo> --base production --head staging \
 `$titles` is the list of PR titles in `production...staging` (`gh api repos/envoy-ai/<repo>/compare/production...staging --jq '.commits[].commit.message | split("\n")[0]'`, merged promotion commits filtered out).
 
 - Stamps post (section 6, message 2) as soon as all production PRs exist.
+
+## Late add
+
+If, after GO 1 ran, the user or a nudge reply names a PR that should have gone in ("2389 should have been in this"), that repo goes back to GO 1 without a new GO: hold its production PR, wait for the PR to merge into `development`, then re-run the release step (release-please opens a fresh `chore(development): release` PR with the next version; approve + squash-merge it), wait for the promotion PR (the promote job or `staging-promotion.yml`), merge it, and re-check the existing production PR: it is branch-to-branch so it picks up the new staging head on its own, but its approval and `gate / Release cut` re-evaluate and the stamps post is repeated for that repo. The other repos keep going. Say in the tick what version the repo is now shipping.
 
 ## 3. Wait for staging and stamps (read-only)
 
@@ -145,7 +149,7 @@ Failure here: stop the order (web is not merged if the backend deploy failed). R
 
 Three posts in `#devs` on a normal day, a nudge before them when approved PRs are sitting unmerged, a failure post only when a repo fails. The exact text is in the GO proposal; on GO, send it with the Slack send tool (never leave it as a draft for the user to send). No Slack tool in the client: show the text and say it was not posted. Professional English, one-liners plus links, no persona.
 
-0. Nudge (GO 1, only when preflight found approved-unmerged PRs): `Deploy starts in ~20 min. These are approved and unmerged, planning to merge them first? @Myles https://github.com/envoy-ai/envoyai-backend/pull/2497 · @Kaushik https://github.com/envoy-ai/envoyai-web/pull/702`
+0. Nudge (GO 1, only when preflight found PRs due to merge): `Deploy starts in ~20 min. These look close, are they going in first? Reply in or out. @Saumil https://github.com/envoy-ai/envoyai-backend/pull/2389 (approved, Eval sample red) · @Kaushik https://github.com/envoy-ai/envoyai-web/pull/702 (approved, green)`
 1. Starting (GO 1): `Starting deploy: backend v1.62.0, web v1.53.0, plugin v1.22.0. Staging first, prod once stamped.`
 2. Stamps (GO 1, once the production PRs exist):
    ```
