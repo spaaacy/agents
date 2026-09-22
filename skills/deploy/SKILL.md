@@ -51,11 +51,11 @@ GO 1 would, in order:
   approve + squash-merge release PRs: backend #2535 (a1b2c3d), web #705 (e4f5a6b), plugin #253 (c7d8e9f)
   merge dev->staging PRs once checks pass (backend #2537 exists; web and plugin: trigger staging-promotion.yml and wait for the PR)
   open staging->production PRs titled "release: vX.Y.Z to production"
-  post #devs stamps request tagging: backend @Saumil @Myles, web @Kaushik, plugin @Kaushik (last approvers)
+  post #devs stamps request (@here)
 Reply GO to run all of it, or name what to drop.
 ```
 
-Tags on the stamps post are chosen by the skill, never asked: for each repo, the people who approved its last two merged production PRs (`gh pr list -R envoy-ai/<repo> --base production --state merged --limit 2 --json reviews`), minus the user; if that is empty, nobody. The user can override by naming people in the GO reply. Then stop and wait.
+The stamps post always opens with `@here`; the skill never asks who to tag and never tags individuals unless the user names them in the GO reply. Then stop and wait.
 
 ## 2. Run GO 1
 
@@ -143,10 +143,10 @@ Three posts in `#devs` on a normal day, a fourth only when a repo fails. The exa
 1. Starting (GO 1): `Starting deploy: backend v1.62.0, web v1.53.0, plugin v1.22.0. Staging first, prod once stamped.`
 2. Stamps (GO 1, once the production PRs exist):
    ```
-   Stamps please for today's prod PRs, staging is deploying now:
-   • backend https://github.com/envoy-ai/envoyai-backend/pull/2541  @Saumil @Myles
-   • web https://github.com/envoy-ai/envoyai-web/pull/706  @Kaushik
-   • plugin https://github.com/envoy-ai/envoyai-chrome-plugin/pull/254  @Kaushik
+   @here stamps please for today's prod PRs, staging is deploying now:
+   • backend https://github.com/envoy-ai/envoyai-backend/pull/2541
+   • web https://github.com/envoy-ai/envoyai-web/pull/706
+   • plugin https://github.com/envoy-ai/envoyai-chrome-plugin/pull/254
    Changelog: https://github.com/envoy-ai/envoyai-backend/releases/tag/v1.62.0
    ```
 3. Done (GO 2): `Deployed: backend v1.62.0 (2963d8f, schema match), web v1.53.0, plugin v1.22.0 submitted to the Chrome Web Store, publishes on Google's approval.`
