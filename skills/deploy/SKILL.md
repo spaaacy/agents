@@ -51,6 +51,7 @@ GO 1 would, in order:
   post #devs nudge for PRs due to merge: backend #2389 (@Saumil, approved, Eval sample red), web #702 (@Kaushik, approved, green); hold until each is merged, declared out, or 20 min pass with no answer
   post #devs: "Starting deploy: backend v1.62.0, web v1.53.0, plugin v1.22.0. Staging first, prod once stamped."
   approve + squash-merge release PRs: backend #2535 (a1b2c3d), web #705 (e4f5a6b), plugin #253 (c7d8e9f)
+    (backend: 4 workflow runs on a1b2c3d are held in action_required; approve them first)
   merge dev->staging PRs once checks pass (backend #2537 exists; web and plugin: trigger staging-promotion.yml and wait for the PR)
   open staging->production PRs titled "release: vX.Y.Z to production"
   post #devs stamps request (@here)
@@ -73,6 +74,13 @@ gh pr review <n> -R envoy-ai/<repo> --approve
 gh pr merge <n> -R envoy-ai/<repo> --squash --match-head-commit <headRefOid>
 ```
 
+- Held workflow runs: a run on the PR head sitting in `action_required` (`gh run list -R envoy-ai/<repo> --commit <headRefOid> --json databaseId,name,status,conclusion`) never reports a check, so the PR never goes clean on its own. Approving it is part of GO 1 for any PR GO 1 already covers merging (the release PR, the promotion PR), never a separate ask:
+
+```
+gh api -X POST repos/envoy-ai/<repo>/actions/runs/<id>/approve
+```
+
+  Say in the tick which runs were approved. If the runs on a head GO 1 named are held, list the approvals in the proposal so the user sees them; if they turn up later, approve and report.
 - Wait for the `Release Please` run on that push to succeed (`gh run list --workflow release-please.yml --branch development --limit 3`): tag, GitHub Release, and on backend and web a `release: vX.Y.Z to staging` PR from its `promote-to-staging` job, unless the 16:00 UTC weekday cron already opened `chore: promote development to staging`. The plugin has no promote job.
 - Promotion PR: find the open `development -> staging` PR (either title). None open: `gh workflow run staging-promotion.yml -R envoy-ai/<repo>` and wait for the PR it opens. Never `gh pr create` this one.
 - Wait for the PR's required checks (backend: `Integration`; web and plugin: their own). No approval is needed on staging. Then:
@@ -188,4 +196,4 @@ Tick cadence: 3 to 5 minutes while a run is in flight, 15 to 20 minutes while wa
 
 ## Never
 
-Approve a PR the user authored. Merge with `--admin` or `--auto`. Squash into staging or production. `gh pr create` the development to staging PR. Open a second promotion PR for a pair that already has one. Run `az`. Run `rollback.yml`, rerun a failed run, or run any workflow outside a GO. Edit, rerun or weaken a check, an eval, or a scenario to get green. Merge a PR whose head sha, approval or checks changed since the GO that named it. Post to Slack outside a GO, or leave a GO'd post as a draft.
+Approve a PR the user authored. Merge with `--admin` or `--auto`. Squash into staging or production. `gh pr create` the development to staging PR. Open a second promotion PR for a pair that already has one. Run `az`. Run `rollback.yml`, rerun a failed run, or run any workflow outside a GO (approving an `action_required` run on a PR the current GO covers merging is inside that GO). Edit, rerun or weaken a check, an eval, or a scenario to get green. Merge a PR whose head sha, approval or checks changed since the GO that named it. Post to Slack outside a GO, or leave a GO'd post as a draft.
