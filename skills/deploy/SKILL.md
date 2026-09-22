@@ -37,7 +37,7 @@ gh api repos/envoy-ai/<repo>/compare/staging...development --jq '{ahead: .ahead_
 gh api repos/envoy-ai/<repo>/compare/production...staging --jq '{ahead: .ahead_by}'
 ```
 
-- Something already mid-deploy (an open `staging -> production` PR, a running build or deploy run): adopt that stage for that repo instead of starting over, and say so. If the adopted state is past GO 1's work, skip straight to waiting for GO 2.
+- Something already mid-deploy (an open `staging -> production` PR, a running build or deploy run): adopt that stage for that repo instead of starting over, and say so. If the adopted state is past GO 1's work, skip to waiting for GO 2 -- but never skip the PRs-due-to-merge scan below, which runs on every tick at every stage.
 - A repo with no open release PR and nothing ahead of staging is skipped for the day. A repo with commits ahead of staging but no release PR means release-please found nothing releasable (chore/docs/ci only); it can still be promoted to staging but its production PR will fail the release gate, so say that and leave it out unless the user includes it.
 - Show what ships: per repo the release PR title (the version) and the commit subjects ahead of staging.
 - PRs into `development` that look due to merge, per repo: `gh pr list -R envoy-ai/<repo> --base development --state open --json number,title,author,reviewDecision,isDraft,mergeable,statusCheckRollup,updatedAt,url`. Keep every non-draft PR that is approved, whatever its checks say (a red check with an approval usually means the author is fixing CI to ship today), plus any non-draft PR updated in the last 24 hours with green checks and no changes requested. Skip the release-please PR itself. List each with author, review state and check state (`approved, Eval sample red`); they become the nudge in GO 1 so nobody's near-done work misses the train by an hour.
@@ -97,6 +97,8 @@ gh pr create -R envoy-ai/<repo> --base production --head staging \
 ## Late add
 
 If, after GO 1 ran, the user or a nudge reply names a PR that should have gone in ("2389 should have been in this"), that repo goes back to GO 1 without a new GO: hold its production PR, wait for the PR to merge into `development`, then re-run the release step (release-please opens a fresh `chore(development): release` PR with the next version; approve + squash-merge it), wait for the promotion PR (the promote job or `staging-promotion.yml`), merge it, and re-check the existing production PR: it is branch-to-branch so it picks up the new staging head on its own, but its approval and `gate / Release cut` re-evaluate and the stamps post is repeated for that repo. The other repos keep going. Say in the tick what version the repo is now shipping.
+
+The skill raises late-add candidates itself, it does not wait to be told. On any tick, a non-draft PR into `development` that is approved, or that was pushed to after the repo's release tag was cut, is named in the tick with its author and check state and an explicit question: "in (late add, costs a re-cut) or out?" One line per candidate, never folded into a list of other PRs, and never silently dropped because the release is already cut -- being past the cut is what makes it a late-add question rather than a nudge. A PR pushed after the release cut timestamp is listed first. Compare `gh release view --json createdAt` against each PR's `updatedAt` to order them.
 
 ## 3. Wait for staging and stamps (read-only)
 
