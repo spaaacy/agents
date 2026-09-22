@@ -37,10 +37,10 @@ gh api repos/envoy-ai/<repo>/compare/staging...development --jq '{ahead: .ahead_
 gh api repos/envoy-ai/<repo>/compare/production...staging --jq '{ahead: .ahead_by}'
 ```
 
-- Something already mid-deploy (an open `staging -> production` PR, a running build or deploy run): adopt that stage for that repo instead of starting over, and say so. If the adopted state is past GO 1's work, skip to waiting for GO 2 -- but never skip the PRs-due-to-merge scan below, which runs on every tick at every stage.
+- Something already mid-deploy (an open `staging -> production` PR, a running build or deploy run): adopt that stage for that repo instead of starting over, and say so. If the adopted state is past GO 1's work, skip straight to waiting for GO 2. Adopting never skips the PRs-due-to-merge scan below: it runs on this tick and every later one until the repo's production PR exists, whatever stage was adopted.
 - A repo with no open release PR and nothing ahead of staging is skipped for the day. A repo with commits ahead of staging but no release PR means release-please found nothing releasable (chore/docs/ci only); it can still be promoted to staging but its production PR will fail the release gate, so say that and leave it out unless the user includes it.
 - Show what ships: per repo the release PR title (the version) and the commit subjects ahead of staging.
-- PRs into `development` that look due to merge, per repo: `gh pr list -R envoy-ai/<repo> --base development --state open --json number,title,author,reviewDecision,isDraft,mergeable,statusCheckRollup,updatedAt,url`. Keep every non-draft PR that is approved, whatever its checks say (a red check with an approval usually means the author is fixing CI to ship today), plus any non-draft PR updated in the last 24 hours with green checks and no changes requested. Skip the release-please PR itself. List each with author, review state and check state (`approved, Eval sample red`); they become the nudge in GO 1 so nobody's near-done work misses the train by an hour.
+- PRs into `development` that look due to merge, per repo: `gh pr list -R envoy-ai/<repo> --base development --state open --json number,title,author,reviewDecision,isDraft,mergeable,statusCheckRollup,updatedAt,url`. Keep every non-draft PR that is approved, whatever its checks say (a red check with an approval usually means the author is fixing CI to ship today), plus any non-draft PR pushed to after the repo's release tag was cut (`gh api repos/envoy-ai/<repo>/git/ref/tags/vX.Y.Z` for the tag's date, compared with the PR's last commit date), plus any non-draft PR updated in the last 24 hours with green checks and no changes requested. Skip the release-please PR itself. One line per candidate, never folded into another list, PRs pushed after the cut first; each with author, review state and check state (`approved, Eval sample red`); they become the nudge in GO 1 so nobody's near-done work misses the train by an hour. **This scan is not a one-off**: it runs on every tick for every repo whose `staging -> production` PR has not been opened yet, including ticks that adopted a mid-deploy state and ticks after the release PR was merged. A PR the scan finds after the release PR is already merged (or after the promotion PR is merged) is a late-add candidate: the tick lists it under `late-add candidate:` with author, review state and check state, and the question goes to its AUTHOR, not the user: the next GO proposal (GO 1, or GO 1's remainder on an adopted deploy) leads with the #devs nudge tagging the authors, and the rest of that GO's items wait for the answers under the hold rules in section 2. The user is asked in or out directly only for PRs they authored themselves. The scan and the report are read-only; posting the nudge and holding the release stay inside a GO.
 
 ## 1. Propose GO 1: ship to staging
 
@@ -57,7 +57,7 @@ GO 1 would, in order:
 Reply GO to run all of it, or name what to drop.
 ```
 
-No PRs due to merge: the nudge line is omitted and there is no wait. The release PRs are named by number, not sha: a PR merged during the nudge window makes release-please rewrite its PR (new version, new changelog), so the head sha is read at merge time and reported then.
+On an adopted mid-deploy state the proposal is GO 1's remainder (whatever is left: open the production PR, stamps post) and it still leads with the nudge when candidates exist; the remainder waits until the nudge resolves, because a late add re-cuts the release and changes the production PR. No PRs due to merge: the nudge line is omitted and there is no wait. The release PRs are named by number, not sha: a PR merged during the nudge window makes release-please rewrite its PR (new version, new changelog), so the head sha is read at merge time and reported then.
 
 The stamps post always opens with `@here`; the skill never asks who to tag and never tags individuals unless the user names them in the GO reply. Then stop and wait.
 
@@ -96,9 +96,7 @@ gh pr create -R envoy-ai/<repo> --base production --head staging \
 
 ## Late add
 
-If, after GO 1 ran, the user or a nudge reply names a PR that should have gone in ("2389 should have been in this"), that repo goes back to GO 1 without a new GO: hold its production PR, wait for the PR to merge into `development`, then re-run the release step (release-please opens a fresh `chore(development): release` PR with the next version; approve + squash-merge it), wait for the promotion PR (the promote job or `staging-promotion.yml`), merge it, and re-check the existing production PR: it is branch-to-branch so it picks up the new staging head on its own, but its approval and `gate / Release cut` re-evaluate and the stamps post is repeated for that repo. The other repos keep going. Say in the tick what version the repo is now shipping.
-
-The skill raises late-add candidates itself, it does not wait to be told. On any tick, a non-draft PR into `development` that is approved, or that was pushed to after the repo's release tag was cut, is named in the tick with its author and check state and an explicit question: "in (late add, costs a re-cut) or out?" One line per candidate, never folded into a list of other PRs, and never silently dropped because the release is already cut -- being past the cut is what makes it a late-add question rather than a nudge. A PR pushed after the release cut timestamp is listed first. Compare `gh release view --json createdAt` against each PR's `updatedAt` to order them.
+A late add starts one of three ways: the user names a PR ("2389 should have been in this"), a nudge reply says a listed PR is in, or the every-tick scan reports a candidate and the user answers hold. Then that repo goes back to GO 1 without a new GO: hold its production PR, wait for the PR to merge into `development`, then re-run the release step (release-please opens a fresh `chore(development): release` PR with the next version; approve + squash-merge it), wait for the promotion PR (the promote job or `staging-promotion.yml`), merge it, and re-check the existing production PR: it is branch-to-branch so it picks up the new staging head on its own, but its approval and `gate / Release cut` re-evaluate and the stamps post is repeated for that repo. The other repos keep going. Say in the tick what version the repo is now shipping.
 
 ## 3. Wait for staging and stamps (read-only)
 
@@ -151,7 +149,12 @@ Failure here: stop the order (web is not merged if the backend deploy failed). R
 
 Three posts in `#devs` on a normal day, a nudge before them when approved PRs are sitting unmerged, a failure post only when a repo fails. The exact text is in the GO proposal; on GO, send it with the Slack send tool (never leave it as a draft for the user to send). No Slack tool in the client: show the text and say it was not posted. Professional English, one-liners plus links, no persona.
 
-0. Nudge (GO 1, only when preflight found PRs due to merge): `Deploy starts in ~20 min. These look close, are they going in first? Reply in or out. @Saumil https://github.com/envoy-ai/envoyai-backend/pull/2389 (approved, Eval sample red) · @Kaushik https://github.com/envoy-ai/envoyai-web/pull/702 (approved, green)`
+0. Nudge (GO 1, only when preflight found PRs due to merge): one line per PR, authors tagged, the user's own PRs left out:
+   ```
+   Deploy starts in ~20 min. Are these going in first? Reply in or out (in = we re-cut the release for it).
+   • @Saumil https://github.com/envoy-ai/envoyai-backend/pull/2389 (approved, Eval sample red, pushed after the cut)
+   • @Steve https://github.com/envoy-ai/envoyai-backend/pull/2520 (approved, green)
+   ```
 1. Starting (GO 1): `Starting deploy: backend v1.62.0, web v1.53.0, plugin v1.22.0. Staging first, prod once stamped.`
 2. Stamps (GO 1, once the production PRs exist):
    ```
@@ -174,6 +177,8 @@ Short and plain:
 backend  v1.62.0  staging deploy running (started 14:19, ~17 min); prod #2541 not yet stamped
 web      v1.53.0  staging landed; prod #706 stamped by Kaushik, ready
 plugin   v1.22.0  promotion PR #253 checks pending
+late-add candidate: backend #2389 by Saumil, approved, Eval sample red, pushed after the cut (one line per candidate, pushed-after-cut first; omit when none)
+late-add candidate: backend #2539 by you, approved, green: in (re-cut) or out?
 did: <what this tick did under the current GO, or "nothing">
 needs GO: <GO 2 proposal / GO 3 proposal / "nothing, waiting on <x>">
 next: <when the next tick is, or "done">
