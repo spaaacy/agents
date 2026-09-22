@@ -2,4 +2,3 @@ mcp/secrets.env
 .DS_Store
 .brainrot-off
 __pycache__/
-.session-titles/
