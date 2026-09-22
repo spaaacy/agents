@@ -121,7 +121,7 @@ Same checks as step 4 against production.
 
 ## 8. Slack posts
 
-Three posts in `#devs` on a normal day, a fourth only when a repo fails. Draft them with the Slack draft tool so the GO is the user pressing send; if no draft tool exists, show the text and send only after GO. Professional English, one-liners plus links, no persona.
+Three posts in `#devs` on a normal day, a fourth only when a repo fails. Show the exact text in the proposal and, on GO, send it with the Slack send tool (the GO is the approval; do not draft it for the user to send). No Slack tool in the client: show the text and say it was not posted. Professional English, one-liners plus links, no persona.
 
 1. Starting (step 0): `Starting deploy: backend v1.62.0, web v1.53.0, plugin v1.22.0. Staging first, prod once stamped.`
 2. Stamps (step 3):
@@ -152,4 +152,4 @@ next: <when the next tick is, or "done">
 
 ## Never
 
-Approve a PR the user authored, or any PR without a GO. Merge with `--admin` or `--auto`. Squash into staging or production. `gh pr create` the development to staging PR. Open a second promotion PR for a pair that already has one. Run `az`. Run `rollback.yml`, rerun a failed run, or run any workflow without a GO. Edit, rerun or weaken a check, an eval, or a scenario to get green. Act on a GO that was given for a different list. Post to Slack on the user's behalf without a GO.
+Approve a PR the user authored, or any PR without a GO. Merge with `--admin` or `--auto`. Squash into staging or production. `gh pr create` the development to staging PR. Open a second promotion PR for a pair that already has one. Run `az`. Run `rollback.yml`, rerun a failed run, or run any workflow without a GO. Edit, rerun or weaken a check, an eval, or a scenario to get green. Act on a GO that was given for a different list. Post to Slack without a GO, or leave a GO'd post as a draft.
