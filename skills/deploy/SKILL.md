@@ -5,7 +5,9 @@ description: Run the daily on-call deploy across envoyai-backend, envoyai-web an
 
 Deploy $ARGUMENTS: nothing means all three repos; `--only backend|web|plugin` limits it to one. Repos are `envoy-ai/envoyai-backend`, `envoy-ai/envoyai-web`, `envoy-ai/envoyai-chrome-plugin`, always addressed with `-R`; this skill needs no local checkout and never touches a working tree.
 
-**Rule zero: nothing changes without a GO.** On its own this skill only reads: `gh pr view/list`, `gh run list/view`, `gh api` reads, `curl` of the two version endpoints. Every change (a merge, a workflow run, opening a PR, a Slack message) is proposed first as an exact list, for example "merge backend #2535 (squash), web #705 (squash), plugin #253 (squash)", and executed only after the user replies GO to that list. A GO covers that list and nothing else; the next stage asks again. There is no flag that removes the asking and no session-wide grant. If the user says "just do the whole thing", say the skill asks per stage and continue asking. Never `az`, in any form. Never approve a PR. Never merge with `--admin`.
+**Rule zero: nothing changes without a GO.** On its own this skill only reads: `gh pr view/list`, `gh run list/view`, `gh api` reads, `curl` of the two version endpoints. Every change (a merge, a workflow run, opening a PR, a Slack message) is proposed first as an exact list, for example "merge backend #2535 (squash), web #705 (squash), plugin #253 (squash)", and executed only after the user replies GO to that list. A GO covers that list and nothing else; the next stage asks again. There is no flag that removes the asking and no session-wide grant. If the user says "just do the whole thing", say the skill asks per stage and continue asking. Never `az`, in any form. Never merge with `--admin`.
+
+**Approvals.** An approval through this skill is the user's own GitHub account stamping, so it is an ordinary change: proposed, then done on GO. The skill may approve a PR the user did not author (the release-please PRs, the automation-opened promotion PRs). It cannot approve the production PRs it opens in step 3: GitHub rejects self-approval, and the production ruleset wants one approval from someone other than the merger, so those wait for a teammate.
 
 Under Claude Code, run it as `/loop /deploy` so the session re-checks on its own. Each tick re-reads GitHub, works out the stage each repo is in, then either proposes the next change and stops for GO, or has nothing to change and says what it is waiting on and when it checks again. A tick with nothing new is a one-liner. In a client without a loop, one tick is the whole run: report and tell the user to run it again.
 
@@ -38,10 +40,11 @@ gh api repos/envoy-ai/<repo>/compare/production...staging --jq '{ahead: .ahead_b
 
 ## 1. Cut the releases
 
-- The release PR is the open PR on `development` by `app/github-actions` titled `chore(development): release X.Y.Z`. Exactly one per repo.
-- Propose: squash-merge them, naming each number and version. GO.
+- The release PR is the open PR on `development` by `app/github-actions` titled `chore(development): release X.Y.Z`. Exactly one per repo. `development` needs one approval; the bot authored it, so the user's own approval counts.
+- Propose: approve (where not yet approved) and squash-merge them, naming each number and version. GO.
 
 ```
+gh pr review <n> -R envoy-ai/<repo> --approve
 gh pr merge <n> -R envoy-ai/<repo> --squash --match-head-commit <headRefOid>
 ```
 
@@ -79,7 +82,7 @@ gh pr create -R envoy-ai/<repo> --base production --head staging \
 `$titles` is the list of PR titles in `production...staging` (`gh api repos/envoy-ai/<repo>/compare/production...staging --jq '.commits[].commit.message | split("\n")[0]'`, merged promotion commits filtered out).
 
 - Propose the stamps post (section 8, message 2), tagging whoever the user names. GO.
-- The skill never approves. It waits for a human approval, `gate / Release cut` and `Integration` (plugin: approval only) and reports what is missing each tick.
+- The skill cannot approve these (it authored them as the user; GitHub rejects self-approval). It waits for a teammate's approval, `gate / Release cut` and `Integration` (plugin: approval only) and reports what is missing each tick.
 
 ## 4. Wait for staging to land
 
@@ -94,7 +97,7 @@ Read-only, per repo.
 
 One repo at a time, in this order: backend, then web, then plugin. The backend advertises the plugin's minimum version and the web's types are generated from it, so a client never lands on production ahead of its backend. Web is not proposed until the backend finished step 6; the plugin not until web did.
 
-- Ready means: step 4 passed, the production PR has an approval, its checks are green, `mergeable` is `MERGEABLE` and `mergeStateStatus` is `CLEAN`. Until then, wait and say what is missing.
+- Ready means: step 4 passed, the production PR has a teammate's approval, its checks are green, `mergeable` is `MERGEABLE` and `mergeStateStatus` is `CLEAN`. Until then, wait and say what is missing.
 - Propose: merge `<repo>` production PR with a merge commit. GO, one per repo.
 
 ```
@@ -149,4 +152,4 @@ next: <when the next tick is, or "done">
 
 ## Never
 
-Approve a PR. Merge with `--admin` or `--auto`. Squash into staging or production. `gh pr create` the development to staging PR. Open a second promotion PR for a pair that already has one. Run `az`. Run `rollback.yml`, rerun a failed run, or run any workflow without a GO. Edit, rerun or weaken a check, an eval, or a scenario to get green. Act on a GO that was given for a different list. Post to Slack on the user's behalf without a GO.
+Approve a PR the user authored, or any PR without a GO. Merge with `--admin` or `--auto`. Squash into staging or production. `gh pr create` the development to staging PR. Open a second promotion PR for a pair that already has one. Run `az`. Run `rollback.yml`, rerun a failed run, or run any workflow without a GO. Edit, rerun or weaken a check, an eval, or a scenario to get green. Act on a GO that was given for a different list. Post to Slack on the user's behalf without a GO.
