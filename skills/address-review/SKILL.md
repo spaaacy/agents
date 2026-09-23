@@ -1,6 +1,6 @@
 ---
 name: address-review
-description: Work through the review comments left on a pull request in two steps. First verify every finding against the current code and report which are real, changing nothing. Then, only after the user says go, raise the product decisions to the user, fix the confirmed findings, and draft replies for the rest. Use when the user asks to verify, check, triage, or address PR review comments or feedback.
+description: Work through the review comments left on a pull request in two steps. First verify every finding against the current code and report which are real, changing nothing. Then, only after the user says go, raise the product decisions to the user, fix the confirmed findings, draft a reply for every finding, and end with one ask: post the replies and push, on the user's go. Use when the user asks to verify, check, triage, or address PR review comments or feedback.
 ---
 
 Target: $ARGUMENTS. A PR number or URL is the PR; a trailing word `fix` (or `address`) means step 2. Nothing means the open PR for the current branch (`gh pr view --json number`); if there is none, say so and stop. The repo is the one in the current directory.
@@ -81,9 +81,9 @@ Work the Confirmed and Partly findings, plus the product calls the user said yes
 - Run the tests for the touched modules. A red test is fixed or reported, never skipped.
 - Commit per finding, or per group of findings that touch the same lines, with the repo's commit convention; the message says what changed, not "address review". Stage specific files only.
 
-Do not push, reply on GitHub, resolve threads, re-request review, or edit the PR body unless the user asks in this conversation. Instead, draft a short reply for every finding, in plain professional English whatever the chat voice is: fixed findings name the commit and what changed in one sentence; Not an issue and declined product calls give the reason in one or two sentences, without arguing. If the user then says to post, post each reply to its own thread (`gh api repos/<owner>/<repo>/pulls/<number>/comments/<databaseId>/replies -f body=...` for inline threads, `gh pr comment` otherwise), and resolve a thread only when the user asked for that too.
+Draft a short reply for every finding, in plain professional English whatever the chat voice is: fixed findings name the commit and what changed in one sentence; Not an issue and declined product calls give the reason in one or two sentences, without arguing. Nothing is posted or pushed yet.
 
-### Report
+### Report, then ask for the go
 
 ```
 #<pr> — <n> fixed · <n> declined · <n> left for you
@@ -91,6 +91,15 @@ Do not push, reply on GitHub, resolve threads, re-request review, or edit the PR
 tests: <what ran and the result>
 decisions I made: <technical calls and why, one line each>
 not done: <anything skipped or blocked, and why>
-replies: <drafted, not posted> | <posted>
-next: push when you say so
+
+Replies (drafted, not posted)
+<path>:<line> (thread <databaseId>)  <reply>
+...
+
+Next, on your go:
+1. post the replies above to their threads
+2. push <branch> to origin (<n> commits: <shas>)
+Reply "go" for both, or name one. After the push: /verify-fixes <pr> in a fresh conversation.
 ```
+
+Then stop and wait. The two items are one ask and both need the go: a task request earlier in the conversation is not a go, and neither is silence. On go: post each reply to its own thread (`gh api repos/<owner>/<repo>/pulls/<number>/comments/<databaseId>/replies -f body=...` for inline threads, `gh pr comment` otherwise), push the branch from the worktree (`git push origin <headRefName>`, never force, never a different branch), then report the reply URLs and the pushed head in one line and stop. Resolve threads, re-request review, or edit the PR body only when the user asks for that too. A go that names one item does only that item and leaves the other as the next ask.
