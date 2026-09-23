@@ -54,19 +54,19 @@ GO 1 would, in order:
     (backend: 4 workflow runs on a1b2c3d are held in action_required; approve them first)
   merge dev->staging PRs once checks pass (backend #2537 exists; web and plugin: trigger staging-promotion.yml and wait for the PR)
   open staging->production PRs titled "release: vX.Y.Z to production"
-  post #devs stamps request (@here)
+  post #devs stamps request (<!here>)
 Reply GO to run all of it, or name what to drop.
 ```
 
 On an adopted mid-deploy state the proposal is GO 1's remainder (whatever is left: open the production PR, stamps post) and it still leads with the nudge when candidates exist; the remainder waits until the nudge resolves, because a late add re-cuts the release and changes the production PR. No PRs due to merge: the nudge line is omitted and there is no wait. The release PRs are named by number, not sha: a PR merged during the nudge window makes release-please rewrite its PR (new version, new changelog), so the head sha is read at merge time and reported then.
 
-The stamps post always opens with `@here`; the skill never asks who to tag and never tags individuals unless the user names them in the GO reply. Then stop and wait.
+The stamps post always opens with `<!here>` (Slack syntax, see section 6); the skill never asks who to tag and never tags individuals unless the user names them in the GO reply. Then stop and wait.
 
 ## 2. Run GO 1
 
 Each item runs on a tick when its precondition is met; ticks in between report progress.
 
-- Nudge (section 6, message 0), one post listing every PR due to merge with its author tagged. Resolve each GitHub login to a Slack user by the name on their GitHub profile (`gh api users/<login> --jq .name`, then Slack user search); an unresolved login is written as plain text. Then hold the release merges per PR: merged or closed, or the author says it is out, releases the hold; the author saying it is in ("yes", "merging", "give me 10") keeps the hold until it merges, up to 60 minutes, after which the skill reports and asks the user whether to keep waiting; no answer at all releases the hold after 20 minutes. Read the thread replies each tick (Slack thread read tool). A PR merged in the window changes what ships: re-read the release PR (new version, new head) and say so in the next tick.
+- Nudge (section 6, message 0), one post listing every PR due to merge with its author tagged. Resolve each GitHub login to a Slack user id by the name on their GitHub profile (`gh api users/<login> --jq .name`, then the Slack user search tool) and write it as `<@Uxxx>`; an unresolved login is written as plain text. Then hold the release merges per PR: merged or closed, or the author says it is out, releases the hold; the author saying it is in ("yes", "merging", "give me 10") keeps the hold until it merges, up to 60 minutes, after which the skill reports and asks the user whether to keep waiting; no answer at all releases the hold after 20 minutes. Read the thread replies each tick (Slack thread read tool). A PR merged in the window changes what ships: re-read the release PR (new version, new head) and say so in the next tick.
 - Release PRs (`chore(development): release X.Y.Z` by `app/github-actions`, one per repo; `development` needs one approval and the bot authored it):
 
 ```
@@ -155,18 +155,18 @@ Failure here: stop the order (web is not merged if the backend deploy failed). R
 
 ## 6. Slack posts
 
-Three posts in `#devs` on a normal day, a nudge before them when approved PRs are sitting unmerged, a failure post only when a repo fails. The exact text is in the GO proposal; on GO, send it with the Slack send tool (never leave it as a draft for the user to send). No Slack tool in the client: show the text and say it was not posted. Professional English, one-liners plus links, no persona.
+Three posts in `#devs` on a normal day, a nudge before them when approved PRs are sitting unmerged, a failure post only when a repo fails. The exact text is in the GO proposal; on GO, send it with the Slack send tool (never leave it as a draft for the user to send). No Slack tool in the client: show the text and say it was not posted. Professional English, one-liners plus links, no persona. **Mentions use Slack's own syntax, never plain `@`:** the broadcast is `<!here>` and a person is `<@U0…>` (id from the Slack user search tool); a plain `@here` or `@Name` goes out as literal text and pings nobody.
 
 0. Nudge (GO 1, only when preflight found PRs due to merge): one line per PR, authors tagged, the user's own PRs left out:
    ```
    Deploy starts in ~20 min. Are these going in first? Reply in or out (in = we re-cut the release for it).
-   • @Saumil https://github.com/envoy-ai/envoyai-backend/pull/2389 (approved, Eval sample red, pushed after the cut)
-   • @Steve https://github.com/envoy-ai/envoyai-backend/pull/2520 (approved, green)
+   • <@U08DGLX8Q1W> https://github.com/envoy-ai/envoyai-backend/pull/2389 (approved, Eval sample red, pushed after the cut)
+   • <@U0BKZETE0QM> https://github.com/envoy-ai/envoyai-backend/pull/2520 (approved, green)
    ```
 1. Starting (GO 1): `Starting deploy: backend v1.62.0, web v1.53.0, plugin v1.22.0. Staging first, prod once stamped.`
 2. Stamps (GO 1, once the production PRs exist):
    ```
-   @here stamps please for today's prod PRs, staging is deploying now:
+   <!here> stamps please for today's prod PRs, staging is deploying now:
    • backend https://github.com/envoy-ai/envoyai-backend/pull/2541
    • web https://github.com/envoy-ai/envoyai-web/pull/706
    • plugin https://github.com/envoy-ai/envoyai-chrome-plugin/pull/254
