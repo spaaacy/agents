@@ -1,11 +1,11 @@
 ---
 name: verify-fixes
-description: Fresh-eyes check that the fixes made after a PR review actually fix the findings. Run it in a new conversation after /address-review or any fix round. It re-reads the review threads, finds the fix commits, checks every finding against the code as it is now, runs the tests, and reports what is fixed, what is not, and what the fixes changed that nobody asked for. Read-only. When something is left it lays out the next steps and drafts the PR review to post so the next fix round can read it from GitHub; when nothing is left it proposes nothing. Use when the user asks to verify, check, double-check, or re-review the fixes for review comments.
+description: Fresh-eyes check that the fixes made after a PR review actually fix the findings. Run it in a new conversation after /address-review or any fix round. It re-reads the review threads, finds the fix commits, checks every finding against the code as it is now, runs the tests, and reports what is fixed, what is not, and what the fixes changed that nobody asked for. Read-only on the code. It then drafts a reply for every finding - closing out the ones the fixes really fixed, contesting the ones they did not - plus the next steps and a PR review when something is still open, and sends nothing until the user says post. Use when the user asks to verify, check, double-check, or re-review the fixes for review comments.
 ---
 
 Target: $ARGUMENTS. A PR number or URL is the PR; `since <sha>` names the last commit the reviewers saw, so everything after it is a fix; pasted text (an /address-review report, a list of commits) is the claim under test. Nothing means the open PR for the current branch (`gh pr view --json number`); if there is none, say so and stop. The repo is the one in the current directory.
 
-This is the second pair of eyes on a fix round, meant to run in a fresh conversation. Nothing said earlier in this conversation and nothing in a pasted report is evidence: the report is the claim being tested, and the agent that wrote the fixes is the one most likely to believe they work. Evidence is GitHub, git, the code at the fix head, and what you run. Read-only on the code: no edits, no commits, no pushes, no resolved threads, no `git stash`, no reset, no new worktrees. The only thing it ever sends anywhere is the review it drafts at the end, and only after the user says post.
+This is the second pair of eyes on a fix round, meant to run in a fresh conversation. Nothing said earlier in this conversation and nothing in a pasted report is evidence: the report is the claim being tested, and the agent that wrote the fixes is the one most likely to believe they work. Evidence is GitHub, git, the code at the fix head, and what you run. Read-only on the code: no edits, no commits, no pushes, no resolved threads, no `git stash`, no reset, no new worktrees. The only thing it ever sends anywhere is the thread replies and the review it drafts at the end, and only after the user says post.
 
 ## 1. Gather
 
@@ -21,7 +21,7 @@ query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo)
   comments(first:100){nodes{author{login} body createdAt url}}}}}'
 ```
 
-A finding is one of: a review thread, resolved or not (resolving a thread is part of the claim, not evidence), a point made in a review summary body, or a PR conversation comment that asks for a change. Read the whole thread: a later reply often narrows the ask, and the last reply may be the reviewer withdrawing it. Skip approvals with no content and CI/coverage status bots. Review bots count as reviewers. Number the findings in the order a reader would fix them; if an /address-review report was pasted, keep its numbering so the two reports line up.
+A finding is one of: a review thread, resolved or not (resolving a thread is part of the claim, not evidence), a point made in a review summary body, or a PR conversation comment that asks for a change. Read the whole thread: a later reply often narrows the ask, and the last reply may be the reviewer withdrawing it. Skip approvals with no content and CI/coverage status bots. Review bots count as reviewers. Note per thread whether it already carries the fix round's own answer - a reply from the PR author or the agent that made the fixes, posted after the reviewer's last comment on that thread - because that decides later whether this check adds a close-out reply or stays quiet. Number the findings in the order a reader would fix them; if an /address-review report was pasted, keep its numbering so the two reports line up.
 
 The code under test is the branch's newest commit, wherever the fixes live: the current checkout if it is on `<headRefName>`, else a worktree on that branch (`git worktree list --porcelain`, the entry with `branch refs/heads/<headRefName>`; on this machine `~/dev/.claude/worktrees/<branch-slug>`), else `origin/<headRefName>` after `git fetch origin`. Read the code from that checkout, never from the diff alone. Uncommitted changes there are not under test: say so and check the committed head. A local head behind its remote means someone pushed on top; say so and check the remote head.
 
@@ -93,41 +93,45 @@ Per finding:
 
 **Verdict** — one line: `Ready to push` (every finding Fixed, Declined-holds, or Withdrawn, and nothing new above Polish); `Back to /address-review: #<n>, #<m>` (the open findings and the new ones, by number); or `Rethink: <why>` (the fix round changed behavior nobody asked for, or the fix sits in the wrong place).
 
-## Next steps
+## Replies and next steps
 
-Decide once, from the verdict, and be explicit about it: the reader should never have to ask "so what now".
+Every finding ends with a reply on its own thread, because the thread is where the next reader looks: the ones the fixes really fixed get closed out, the ones they did not get contested. Draft them all, show the draft, send nothing until the user says post. Never resolve a thread — that is the reviewer's call — never edit the PR body, never push.
 
-**Nothing left** (`Ready to push`): say so in one line and stop. No draft, no list, no offers, no suggestions for things nobody asked about.
+**Close-out replies** — Fixed and Declined-holds. One or two sentences in the finding's own thread, prefixed `Fixed:` with the commit and what changed, or `Declined:` with the reason that survives the code. Skip the thread that already carries the fix round's own answer to the same effect: a second "fixed in abc123" on one thread is noise, and /address-review posts those replies when it pushes. Withdrawn findings get nothing — the reviewer closed them.
+
+**Contest replies** — Not fixed, Partly fixed, Unaddressed, Declined-wrong. One to three sentences in the finding's own thread, prefixed `Not fixed:` / `Partly fixed:` / `Still open:` / `Declined, but:`, saying what still happens and where. Keeping it in the thread keeps the ask in one place for the next round. These are drafted even when the thread already claims the finding is fixed — that claim is the thing being corrected, so say so plainly and without arguing. A finding with no thread (a review-body point, a conversation comment) becomes an inline comment or a summary sentence instead.
+
+Then split on the verdict, and be explicit either way: the reader should never have to ask "so what now".
+
+**Nothing left** (`Ready to push`): the draft is the close-out replies and nothing else — no summary review, no inline comments, no next-steps list, no offers, no suggestions for things nobody asked about. Put `Ready to push` on one line above them. If every fixed thread already carries its answer, there is nothing to post: say that in one line and stop.
 
 **Something left** (`Back to /address-review` or `Rethink`): the next fix round will be another fresh agent, and /address-review reads findings from the PR's review threads, not from this conversation, so what you found has to be on GitHub before it can be fixed. Lay the steps out in order, then the draft:
 
 ```
 Next
-1. post the review below (say "post")
+1. post the replies and review below (say "post")
 2. /address-review <pr> fix in a fresh conversation, for #<n>, #<m> and the new findings
 3. /verify-fixes <pr> again after that round
 ```
 
-Then draft the review in the shape /post-review uses, in plain professional English whatever the chat voice, short and without restating the diff. It is read by the PR author and the reviewers, who may not know this check ran, so the summary says in one sentence that this was a check of the fix round.
+The summary and any new findings ride along, in the shape /post-review uses, in plain professional English whatever the chat voice, short and without restating the diff. The summary is read by the PR author and the reviewers, who may not know this check ran, so it says in one sentence that this was a check of the fix round.
 
 - **Summary comment**, 2 to 5 sentences: what the fix round got right in one line (counts, no numbers game), what is still open, what the fixes introduced, and what to do first. No headers, no tables.
-- **Still-open findings** (Not fixed, Partly fixed, Unaddressed, Declined-wrong): a reply inside the finding's own thread, prefixed `Not fixed:` / `Partly fixed:` / `Still open:`, one to three sentences saying what still happens and where. Keeping it in the thread keeps the ask in one place for the next round. A finding with no thread (a review-body point, a conversation comment) becomes an inline comment or a summary sentence.
 - **New findings** above Polish: one inline comment each, prefixed `Blocking:` or `Should fix:`, anchored on a line that is in `gh pr diff <pr>`; a line outside the diff moves to the nearest changed line in that file or into the summary. Polish becomes a one-line `Nit:` only when it has a line and is worth the click; otherwise one summary sentence. Merge findings on the same line.
-- Fixed findings get no comment from this skill.
 
-Show the whole draft as:
+Show the whole draft as (the Summary and Inline blocks only when something is left):
 
 ```
 Summary
 <body>
 
 Thread replies
-<path>:<line> (thread <databaseId>)  <reply>
+<path>:<line> (thread <databaseId>)  [Fixed: | Not fixed: | …] <reply>
 
 Inline
 <path>:<line>  <comment>
 ```
 
-Then stop and wait. Post only when the user replies "post"; any other reply is an edit request, so apply it and show the draft again. On "post": the summary and inline comments go out as ONE review, `gh api repos/{owner}/{repo}/pulls/{number}/reviews --input review.json` with `{"event":"COMMENT","body":"<summary>","comments":[{"path":"...","line":N,"side":"RIGHT","body":"..."}]}` (the JSON written to the scratchpad, never inline on the command line; `COMMENT` only, never APPROVE or REQUEST_CHANGES); each thread reply goes to its thread, `gh api repos/{owner}/{repo}/pulls/{number}/comments/{databaseId}/replies -f body=...`. A 422 on an inline comment moves it into the summary as a bullet, retried once. Print the review URL. Never resolve a thread, never edit the PR body, never push.
+Then stop and wait. Post only when the user replies "post"; any other reply is an edit request, so apply it and show the draft again. On "post": each thread reply goes to its own thread, `gh api repos/{owner}/{repo}/pulls/{number}/comments/{databaseId}/replies -f body=...`; the summary and inline comments go out as ONE review, `gh api repos/{owner}/{repo}/pulls/{number}/reviews --input review.json` with `{"event":"COMMENT","body":"<summary>","comments":[{"path":"...","line":N,"side":"RIGHT","body":"..."}]}` (the JSON written to the scratchpad, never inline on the command line; `COMMENT` only, never APPROVE or REQUEST_CHANGES). A clean round has no summary and no inline comments, so it opens no review at all — the replies are the whole post. A 422 on an inline comment moves it into the summary as a bullet, retried once. Print the review URL, or the reply URLs when there is no review.
 
 Whatever the verdict: change no code and do not start fixing what you found; that is the next /address-review round's job.
