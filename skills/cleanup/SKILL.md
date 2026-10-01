@@ -18,7 +18,7 @@ This must happen before step 3: the api container runs the backend checkout's co
 For each repo: `git worktree prune`, then `git worktree list --porcelain`. For every linked worktree (not the main checkout):
 - Uncommitted changes? `git -C <wt> status --porcelain`. If dirty, list the files and mark it "keep unless you say otherwise"; never propose removal of a dirty tree without showing what is in it.
 - Branch merged? `git merge-base --is-ancestor <branch> origin/development`, or the PR is merged/closed (`gh pr list --head <branch> --state all --json state,number`). Merged or closed with a clean tree = propose `git worktree remove <wt>` and `git branch -d <branch>`.
-- Open PR or unmerged and clean = leave it, list it as "in flight" with the PR number.
+- Open PR or unmerged, with a clean tree = still propose `git worktree remove <wt>`; an open PR is not a reason to keep a tree, only uncommitted changes are. Keep the local branch (the PR still needs it, and it holds any commits not pushed yet), and say in the report line that the PR is open, with its number and the count of unpushed commits (`git -C <wt> rev-list --count @{u}..HEAD`; no upstream = all of them are local-only, say so).
 Also list worktree directories on disk under `~/dev/.claude/worktrees/` and `<repo>/.claude/worktrees/` that git no longer knows about (leftovers after a prune); propose `rm -rf` for those.
 Local branches with no worktree that are merged into origin/development: propose `git branch -d`. Never touch remote branches. Never run `git stash` (the stash stack carries other people's WIP).
 
@@ -30,7 +30,7 @@ The stack is `docker compose` in the backend checkout (`docker-compose.yaml`; co
 Classify:
 - **Never touch**: `envoy` (the dev DB), `envoy_checkpoint` (the email agent's LangGraph checkpointer), `postgres`, `envoyai_test`.
 - **Always safe to drop**: `envoy_tb_*` (per-test clones), `envoy_tpl_*` (the test template cache, rebuilt on the next DB-tier run).
-- **Safe when their worktree is gone**: `envoyai_test_<slug>` where `<slug>` is the branch name lowercased with non-alphanumerics as `_` (from `poe worktree-bootstrap --with-db`); propose dropping any whose branch has no live worktree from step 1.
+- **Safe when their worktree is gone**: `envoyai_test_<slug>` where `<slug>` is the branch name lowercased with non-alphanumerics as `_` (from `poe worktree-bootstrap --with-db`); propose dropping any whose branch has no live worktree from step 1, or whose worktree step 1 proposes removing (same report, run after the worktree removal).
 - **Scratch from past migration debugging**: `scratch_chain`, `envoy_mig_scratch`, `envoy_headref` and similar; propose dropping unless step 3 is about to reuse one that already sits at head.
 Drop with `DROP DATABASE "<name>" WITH (FORCE);` via the same psql.
 
@@ -65,14 +65,15 @@ Finish by re-running the stamp/head check and printing before → after.
 Synced
   envoyai-backend 151fa7250 → 8bb16a997; envoyai-web up to date; envoyai-chat-ui not pulled (on aakif/x, 3 behind)
 Worktrees
-  keep     <path> (<branch>, dirty: 3 files / PR #123 open)
-  1. remove <path> (<branch>, merged in #456)
+  keep     <path> (<branch>, dirty: 3 files)
+  1. remove <path> + delete branch (<branch>, merged in #456)
+  2. remove <path>, keep branch (<branch>, clean, PR #123 open, 0 unpushed)
 Databases
-  2. drop envoy_tb_56a04cd43b, envoy_tb_9f031974bc  (test clones)
-  3. drop envoyai_test_aakif_eng_1364_7_outbox_drainer  (branch has no worktree)
+  3. drop envoy_tb_56a04cd43b, envoy_tb_9f031974bc  (test clones)
+  4. drop envoyai_test_aakif_eng_1364_7_outbox_drainer  (branch has no worktree)
 Migrations
   stamp 370294b7b171 is not in the chain; head is 20260903_unusable_pw_hash_backfill
-  4. stamp back to <parent> and upgrade (case b)
+  5. stamp back to <parent> and upgrade (case b)
 Not checked: <...>
 Reply with the numbers to run, or "all".
 ```
