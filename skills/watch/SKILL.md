@@ -9,6 +9,8 @@ Watch $ARGUMENTS: a PR number or URL, else the open PR for the current branch (`
 
 One invocation is one tick. Under Claude Code, run it as `/loop /watch <pr>` so the session re-checks on its own; each tick ends by scheduling the next wake-up (5 to 10 minutes while checks are running, 20 to 30 minutes while waiting on a human review, stop when done). In a client with no loop, one tick is the whole run: report and tell the user to run it again later.
 
+Flow: this runs beside the review loop, not inside it. It owns CI and mergeability only; review findings are `/address-review`'s, a red `Eval sample` with confirmed regressions is `/fix-evals <pr>`'s, and the merge is the user's. It reuses the worktree `/pickup` or `/address-review` made and never creates a second one on the same branch. When the PR is merged, `/deploy` ships it on the next release and `/linear-sweep` moves the ticket.
+
 ## 1. Read the state
 
 ```
@@ -45,7 +47,7 @@ Read the failure, not the summary: `gh run view <run-id> --log-failed` (run id f
 - **Infra failure** (runner lost, timeout with no test failure, network, a `skipping`/cancelled from a concurrency group): `gh run rerun <run-id> --failed`, once. A second infra failure on the same check is reported, not retried again.
 - **Lint, format, type, drift check** (ruff, mypy, prettier, eslint, svelte-check, the str-enum lint, migration head, `openapi-v1.json` drift, prompt goldens drift): reproduce locally in the worktree, fix or regenerate, commit, push.
 - **Test failure**: reproduce locally, read the test and the code it covers, fix the code. If the test is asserting the OLD behavior and the PR intends the new one, that is the PR author's spec change, not a watcher's call: report it with the test name and stop touching that check.
-- **Eval sample regression**: report the scenario ids and the confirmed/flaky split. Never edit a scenario, a judge, `standing_reds.json`, or a golden to get green; a flaky pass on retry is already handled by the gate.
+- **Eval sample regression** (the check's title shows one or more regressions): not the watcher's fix. Put the scenario ids with their confirmed / flaky / known-failure split under `needs you:` with `run /fix-evals <pr>`, and keep watching the other checks. Never edit a scenario, a judge, `standing_reds.json`, or a golden to get green; a flaky pass on retry is already handled by the gate. A title of `no batch produced`, or a regression whose detail says `(run error)`, is an infrastructure failure: rerun once as above, then hand it to `/fix-evals` the same way.
 - **Coverage (codecov/patch)**: add tests for the uncovered lines of the PR's own diff. Never lower a threshold or a baseline.
 
 Fixes go in as their own commit with the repo's commit convention, message naming the check (e.g. `fix(tests): pin negotiation tier test after rebase`). Run the relevant local check before pushing. Never amend or rewrite the author's commits to hide a fix.

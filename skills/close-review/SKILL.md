@@ -7,7 +7,9 @@ Target: $ARGUMENTS, read exactly as /verify-fixes reads it: a PR number or URL, 
 
 Why this exists: every fresh look at a branch finds something, so a loop of review, fix, verify never ends on its own. This skill ends it. It runs the same check as /verify-fixes on what the previous round asked for, then holds anything new to a bar that only a real production bug clears. The output is a decision to close, or one last short list. It is never a fresh review, and finding nothing new is the expected outcome, not a failure of effort.
 
-Read-only on the code, like /verify-fixes: no edits, no commits, no pushes, no resolved threads, no stash, no reset. The only thing it sends anywhere is the review it may draft at the end, after the user says post.
+Read-only on the code, like /verify-fixes: no edits, no commits, no pushes, no resolved threads, no stash, no reset. The only thing it sends anywhere is the thread replies and the review it drafts at the end, after the user says post.
+
+Flow: this is the last skill in the review loop (`/review` or reviewers' threads, then `/address-review`, then `/verify-fixes`, repeated). It runs in place of `/verify-fixes` from round 3 on, or whenever the user says the review is going in circles. After it: the user pushes if anything is unpushed, `/watch <pr>` keeps the checks green until a teammate approves, and the user merges.
 
 ## 1. Check the previous round
 
@@ -43,8 +45,8 @@ Per previous finding, the /verify-fixes line: verdict, the fix sha and what it c
 
 ## Next steps
 
-**Close**: every previous finding is Fixed, Declined-holds, or Withdrawn, and nothing was raised. Say `Review closed: push and request approval` in one line and stop. No draft, no list, no offers, no "you might also". If the fix commits are unpushed, say so in that same line; pushing is the user's action.
+**Close**: every previous finding is Fixed, Declined-holds, or Withdrawn, and nothing was raised. Put `Review closed: push and request approval` on one line (if the fix commits are unpushed, say so in that same line; pushing is the user's action), then draft the close the way /verify-fixes' clean round does, so the reviewers see it where they look: the `Fixed:` / `Declined:` thread replies for every finding that does not already carry a verification close-out for this head, plus one closing summary review — a `COMMENT` review with `"comments": []` saying in one sentence that this was the closing pass, naming the verified head, confirming the reviewed findings are addressed and nothing blocking remains, naming in one sentence what was seen and left out on purpose (so the next fresh agent treats it as settled), and ending with "Review closed." Nothing else: no list, no offers, no "you might also". Show the draft, stop, and post only when the user says post, with the same commands /verify-fixes uses. Never `APPROVE`, never resolve a thread.
 
 **One more round**: something is still open or something was raised. Lay out the steps and draft the review exactly as the /verify-fixes next-steps section does: thread replies for still-open findings, inline comments for raised ones, one summary, posted as one COMMENT review only after the user says post. Two additions: the summary comment says in one sentence that this was the closing pass and the listed items are the last ones, and it ends with one sentence naming what was seen and left out on purpose, so the next fresh agent treats those as settled. Then stop.
 
-Whatever the outcome, change no code and do not start fixing what you found.
+Whatever the outcome, change no code and do not start fixing what you found; an open finding goes back through `/address-review`.

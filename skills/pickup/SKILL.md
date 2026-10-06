@@ -10,6 +10,8 @@ Two steps, always in order, each ending with a stop:
 1. **Context** (the default): read everything, report, change nothing — no branch, no worktree, no edits, no Linear writes, no PR.
 2. **Work**: runs only when the user says so after step 1 ("go", "start", or this skill again with keys). If step 1 has not run in this conversation, run it first and stop there.
 
+Flow: this is the first skill in the PR lifecycle. It ends with a draft PR; the author then runs `/review <pr>` on it, `/watch <pr>` keeps it green while reviewers read it (an `Eval sample` red there is `/fix-evals <pr>`), their comments are worked with `/address-review <pr>` and checked with `/verify-fixes <pr>`, the user merges, `/deploy` ships it and `/linear-sweep` moves the ticket. The worktree this skill creates is the one every later skill reuses, and `/cleanup` removes it once the PR has shipped.
+
 # Step 1: context
 
 ## The ticket
@@ -92,7 +94,7 @@ Worked in dependency order, each shippable on its own. Never switch or edit a ma
 Red before green, every time the change has an observable behaviour:
 
 - **Code behaviour**: write the failing test first, run it, confirm it fails for the reason you expect, then write the code, then run it green. A test written after the fix proves nothing about the bug.
-- **Agent or prompt behaviour**: the eval scenario is the test. Add it (both polarities where relevant — should-fire and should-hold), run the target, watch it fail, then change the prompt or the node, then run it again. Never `xfail` an LLM behaviour; probabilistic behaviour gets `trials` + `min_pass_rate`.
+- **Agent or prompt behaviour**: the eval scenario is the test. Add it (both polarities where relevant — should-fire and should-hold), run the target, watch it fail, then change the prompt or the node, then run it again. Measure it the way `/fix-evals` measures (its "Measure" section is the shared rule): several trials, never one; the touched scenario's siblings and should-hold twins re-run beside it; an extraction change measured on the real node or the agent-loop target, not only the prompt target, because the two call the model differently. Never `xfail` an LLM behaviour; probabilistic behaviour gets `trials` + `min_pass_rate`.
 - **A production bug**: the reproduction is the test, and an incident-born case becomes a scenario with `provenance: incident` and its `source_id`.
 - **Skip it** for a change with no observable behaviour — a rename, a docs edit, a dependency bump, a generated file — and say in the report which tickets skipped it and why.
 - Never weaken a test, eval, lint rule, baseline, or type check to make something pass.
@@ -115,7 +117,7 @@ did: <what changed, one line per area>
 tests: <what ran, red-first or not, and the result>
 decisions I made: <technical calls and why, one line each>
 not done: <skipped, blocked, or deliberately out of scope, and why>
-next: <the next ticket — say go> | /review <pr> before you read it
+next: <the next ticket — say go> | /review <pr> before you read it, then /watch <pr>
 ```
 
 Then stop. Do not start the next ticket without a fresh go.

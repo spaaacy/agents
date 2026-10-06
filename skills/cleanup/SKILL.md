@@ -5,6 +5,8 @@ description: Clean up the local dev machine - stale git worktrees and branches, 
 
 Scope: $ARGUMENTS if given (`worktrees`, `databases`, `migrations`, or a repo path), else everything, for the repo in the current directory (defaults to envoyai-backend; the worktree pass also covers envoyai-web, envoyai-chrome-plugin, envoyai-chat-ui).
 
+Flow: this is the end of the lifecycle. The worktrees it removes are the ones `/pickup`, `/address-review` and `/watch` created, and `/linear-sweep` has usually just confirmed their PRs shipped. It never touches a worktree whose PR is still being worked on in another skill without showing what is in it first.
+
 Two phases. **Phase 1 always runs and changes nothing except the step 0 sync**: gather the facts below and print one plain-English report with a numbered list of proposed actions. **Phase 2 runs only the actions the user approves by number (or "all")**. Never delete a worktree with uncommitted changes, never drop a database, never `down -v`, and never force anything without that approval. Say what you did not check.
 
 ## 0. Fetch and pull latest

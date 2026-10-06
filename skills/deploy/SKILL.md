@@ -5,6 +5,8 @@ description: Run the daily on-call deploy across envoyai-backend, envoyai-web an
 
 Deploy $ARGUMENTS: nothing means all three repos; `--only backend|web|plugin` limits it to one. Repos are `envoy-ai/envoyai-backend`, `envoy-ai/envoyai-web`, `envoy-ai/envoyai-chrome-plugin`, always addressed with `-R`; this skill needs no local checkout and never touches a working tree.
 
+Flow: this is where merged PRs go. It comes after the review loop and `/watch` have handed a PR back and the user has merged it; it never merges anything into `development`, never fixes a red check on a candidate PR (a red `Eval sample` on a PR due to merge is its author's `/fix-evals`, named in the nudge, never this skill's), and when production has landed the next step is `/linear-sweep` to move the shipped tickets.
+
 **Rule zero: nothing changes outside a GO.** On its own this skill only reads: `gh pr view/list`, `gh run list/view`, `gh api` reads, `curl` of the two version endpoints. Changes happen in two batches, each proposed as an exact list (PR numbers, head shas, the Slack text) and executed only after the user replies GO to that list:
 
 - **GO 1, ship to staging:** the starting post, approving and squash-merging the release PRs, triggering the promotion action where no promotion PR exists, merging the promotion PRs once their checks pass, opening the production PRs, the stamps post. Then it waits.
@@ -151,7 +153,7 @@ Failure here: stop the order (web is not merged if the backend deploy failed). R
 
 - Per repo: version, production sha, the build and deploy run links, store status for the plugin.
 - Send the done post (already covered by GO 2).
-- Stop the loop.
+- Stop the loop, and end with one line: `/linear-sweep` moves the shipped tickets to Staging or Done.
 
 ## 6. Slack posts
 

@@ -10,6 +10,8 @@ Two steps, always in order, each ending with a stop:
 1. **Verify** (the default): read every open finding, check it against the code as it is now, report. Change nothing: no edits, no commits, no GitHub replies, no resolved threads.
 2. **Address**: runs only when the user says so after step 1 ("address them", "go", "fix", or this skill again with `fix`). If step 1 has not run in this conversation, run it first and stop there; do not verify and fix in one go.
 
+Flow: this is the author's side of a review round. The findings come from reviewers' threads (or a `/review` the user points at); `/verify-fixes <pr>` in a fresh conversation is the second pair of eyes on what this skill fixed, and sends the next round back here (`Back to /address-review`) until `/close-review` ends it. `/watch <pr>` owns CI in the meantime: a red `Eval sample` that no finding covers is `/fix-evals <pr>`, not this round, and a check that is red for an unrelated reason is `/watch`'s. Where this skill works (a worktree on the PR branch) is where `/pickup` started and where `/cleanup` finishes.
+
 ## Step 1: verify
 
 ### Gather
@@ -76,7 +78,7 @@ Never switch or edit the main checkout's branch. Reuse a worktree already on the
 
 Work the Confirmed and Partly findings, plus the product calls the user said yes to, in step 1's order. For each one:
 - Make the smallest change that fixes the confirmed problem. No drive-by refactors, no fixes for findings that were ruled Not an issue, and no behavior change nobody asked for. If the fix turns out to need a product decision after all, stop that finding and ask.
-- Follow the repo's rules for the kind of change: tests for changed behavior, eval scenarios for prompt or agent behavior changes, regenerated generated files, migrations per the repo's workflow.
+- Follow the repo's rules for the kind of change: tests for changed behavior, eval scenarios for prompt or agent behavior changes, regenerated generated files, migrations per the repo's workflow. A finding about agent or prompt behaviour (a missing scenario, a reviewer citing an eval red, a prompt rule the reviewer wants changed) is fixed under `/fix-evals`' "Measure" rules: the scenario first, several trials, the should-hold siblings beside it, and an A/B against the base prompt when a sibling moves; a single green trial is not a fix.
 - Never weaken a test, eval, lint rule, baseline, or type check to make a finding go away.
 - Run the tests for the touched modules. A red test is fixed or reported, never skipped.
 - Commit per finding, or per group of findings that touch the same lines, with the repo's commit convention; the message says what changed, not "address review". Stage specific files only.

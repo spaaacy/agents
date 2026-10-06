@@ -7,6 +7,8 @@ Target: the PR number or URL in $ARGUMENTS, else the PR the most recent /review 
 
 Everything drafted here is read by another engineer on GitHub, so it is plain professional English regardless of any chat voice. Short, direct, no jargon, no severity theater, no "I verified by reading X", no restating the diff back to the author.
 
+Flow: `/review` found the findings; this posts them. The PR author's next step is `/address-review <pr>` (verify, then fix on their go), then `/verify-fixes <pr>` in a fresh conversation; say that in the last line after posting. The same one-review posting shape (`gh api .../reviews --input review.json`, `COMMENT` only) is what `/verify-fixes` and `/close-review` use for their summaries, so a reader sees one voice across the whole review.
+
 ## Step 1: draft, then stop
 
 Build the review from the findings and show the whole draft in the chat, in exactly the shape it will be posted, then stop and wait. Do not post until the user replies with "post" (or edits and then says post). Any other reply is an edit request: apply it and show the draft again.
@@ -43,4 +45,4 @@ Post as ONE pull-request review so the summary and inline comments arrive togeth
 gh api repos/{owner}/{repo}/pulls/{number}/reviews --input review.json
 ```
 
-with `{"event":"COMMENT","body":"<summary>","comments":[{"path":"...","line":N,"side":"RIGHT","body":"..."}]}`. Write the JSON to the scratchpad, never inline on the command line. Use `event: COMMENT`, never APPROVE or REQUEST_CHANGES; the human decides that. If GitHub rejects a comment line (422), drop that comment into the summary as a bullet and retry once. Then print the review URL from the response. It posts under the user's own GitHub account.
+with `{"event":"COMMENT","body":"<summary>","comments":[{"path":"...","line":N,"side":"RIGHT","body":"..."}]}`. Write the JSON to the scratchpad, never inline on the command line. Use `event: COMMENT`, never APPROVE or REQUEST_CHANGES; the human decides that. If GitHub rejects a comment line (422), drop that comment into the summary as a bullet and retry once. Then print the review URL from the response and one line: the author works it with `/address-review <pr>`. It posts under the user's own GitHub account.

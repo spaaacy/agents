@@ -14,6 +14,30 @@ Fresh machine: clone to `~/.agents`, copy `mcp/secrets.env.example` to `mcp/secr
 
 For Codex only, run `./install.sh codex`. Python 3.11+ is required by the configuration scripts. The installer respects an existing `CODEX_HOME` and preserves unrelated settings and existing links/files. Conflicting links are reported rather than replaced.
 
+## Skill flow
+
+The skills under `skills/` are one lifecycle, and each one names its neighbours in a "Flow" line near its top so an agent running one knows what came before and what comes next.
+
+```
+/pickup <ticket>        context, then on go: worktree, test-first build, draft PR
+  /review <pr>          the author's own pre-PR review (read-only)
+    /post-review        posts it as one GitHub review, after "post"
+    /digest             the plain-English rewrite of any review-shaped output
+  /watch <pr>           keeps CI green and the branch rebased; never merges
+    /fix-evals <pr>     a red Eval sample, a red nightly, or a flaky scenario
+  reviewers comment
+  /address-review <pr>  verify the findings, then on go: fix, reply, push
+  /verify-fixes <pr>    fresh-eyes check of that round; routes back or closes
+  /close-review <pr>    round 3+: the closing pass that ends the review
+  the user merges
+/deploy                 cut releases, staging, production, in two GOs
+/linear-sweep           tickets to the state their code actually reached
+/cleanup                worktrees, local databases, migration drift
+/brainrot               the chat voice toggle (standalone)
+```
+
+Shared rules every skill follows: a skill that can change something runs in two steps (read and report, then act only on the user's go, and a task request earlier in the conversation is never a go); nothing merges, approves, resolves threads, or runs `az`; work happens in a worktree on the PR branch (`~/dev/.claude/worktrees/<slug>`), never on a main checkout's branch, never with `git stash`; anything posted to GitHub, Linear or Slack is plain professional English whatever the chat voice; standing eval reds are added only with the user's explicit words.
+
 ## Account connections
 
 Installing local files does not install a hosted plugin, sign into its account, or add tools to an existing chat. `codex/connections.json` declares services routed through Codex plugins (currently Slack); the renderer explicitly reports that routing without claiming the connection is ready.
