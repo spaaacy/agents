@@ -62,7 +62,7 @@ Reply GO to run all of it, or name what to drop.
 
 On an adopted mid-deploy state the proposal is GO 1's remainder (whatever is left: open the production PR, stamps post) and it still leads with the nudge when candidates exist; the remainder waits until the nudge resolves, because a late add re-cuts the release and changes the production PR. No PRs due to merge: the nudge line is omitted and there is no wait. The release PRs are named by number, not sha: a PR merged during the nudge window makes release-please rewrite its PR (new version, new changelog), so the head sha is read at merge time and reported then.
 
-The stamps post always opens with `<!here>` (Slack syntax, see section 6); the skill never asks who to tag and never tags individuals unless the user names them in the GO reply. Then stop and wait.
+The stamps post always opens with `<!here>` (Slack syntax, see section 6); the skill never asks who to tag and never tags individuals unless the user names them in the GO answer. The proposal text stays in the chat as above, and the GO itself is asked with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options): run all of it (Recommended), run it without the items named, or hold. Every GO (1, 2 and 3), the in-or-out question on a PR the user authored, and the keep-waiting question after a 60-minute hold are asked this way, and only then: a pending question stops the ticks, so the skill asks only when it is waiting on the user anyway, and bundles every open decision into that one call. Then wait.
 
 ## 2. Run GO 1
 

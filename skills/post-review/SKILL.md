@@ -11,7 +11,7 @@ Flow: `/review` found the findings; this posts them. The PR author's next step i
 
 ## Step 1: draft, then stop
 
-Build the review from the findings and show the whole draft in the chat, in exactly the shape it will be posted, then stop and wait. Do not post until the user replies with "post" (or edits and then says post). Any other reply is an edit request: apply it and show the draft again.
+Build the review from the findings and show the whole draft in the chat, in exactly the shape it will be posted, then ask with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options): post it as drafted (Recommended), or edit first. An edit answer names the change: apply it, show the draft again, and ask again. Never post without that answer.
 
 **Summary comment** (the review body), 3 to 6 sentences:
 - Line one: the call. "Ready once the two items below are fixed." / "Needs a rethink on X before the rest is worth polishing." / "Looks good, two nits."

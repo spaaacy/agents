@@ -36,7 +36,7 @@ The skills under `skills/` are one lifecycle, and each one names its neighbours 
 /brainrot               the chat voice toggle (standalone)
 ```
 
-Shared rules every skill follows: a skill that can change something runs in two steps (read and report, then act only on the user's go, and a task request earlier in the conversation is never a go); nothing merges, approves, resolves threads, or runs `az`; work happens in a worktree on the PR branch (`~/dev/.claude/worktrees/<slug>`), never on a main checkout's branch, never with `git stash`; anything posted to GitHub, Linear or Slack is plain professional English whatever the chat voice; standing eval reds are added only with the user's explicit words.
+Shared rules every skill follows: a skill that can change something runs in two steps (read and report, then act only on the user's go, and a task request earlier in the conversation is never a go); nothing merges, approves, resolves threads, or runs `az`; work happens in a worktree on the PR branch (`~/dev/.claude/worktrees/<slug>`), never on a main checkout's branch, never with `git stash`; anything posted to GitHub, Linear or Slack is plain professional English whatever the chat voice; standing eval reds are added only with the user's explicit words; and every decision, go, or post is asked through the client's structured question tool (Claude Code: `AskUserQuestion`), one call carrying every open decision with the recommended option first, never a "reply go" line the user has to answer in free text.
 
 ## Account connections
 

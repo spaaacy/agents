@@ -80,13 +80,13 @@ Open with one line: `<#pr | nightly <date>>: <n> reds · <n> yours · <n> spec c
    Plan: <fix the change: … | re-spec the scenario | fix the expectation (prove with trials) | propose a standing red + the owning ticket | trials + floor from the numbers | fix the harness | rerun once>
 ```
 
-Then **Not verified** (cells not measured locally and why, inferences, steps CI skipped), **Decisions for you** (every product call: what the agent should say or do when the prompt and the scenario disagree and the ticket does not settle it; which standing reds to add, by name), and stop. Say nothing about starting the fixes on your own.
+Then **Not verified** (cells not measured locally and why, inferences, steps CI skipped). Then ask with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options), in one call: one question per product call (what the agent should say or do when the prompt and the scenario disagree and the ticket does not settle it), one multi-select question listing the cells proposed as standing reds (a cell is added only when it is picked there or named in chat; the default is none), and the go: fix everything classified (Recommended), fix only the cells named, or stop here. Wait for the answers. Say nothing about starting the fixes on your own.
 
 ## Step 2: fix
 
 ### Decisions first
 
-Put every product call from step 1, and any new one, to the user in one round before touching anything. Use the client's structured question tool when it has one (Claude Code: `AskUserQuestion`, up to 4 questions, 2 to 4 options each, the recommended option first and marked "(Recommended)", each option saying what the carrier, customer, or rep would experience); otherwise ask in chat as a numbered list and stop. Technical choices (where the rule goes, how to word a scenario note, which trial count) are decided here and noted. A standing-red entry is never covered by a general go: it is added only when the user names the cell in that conversation.
+Put every product call from step 1, and any new one, to the user in one round before touching anything. Use the client's structured question tool when it has one (Claude Code: `AskUserQuestion`, up to 4 questions, 2 to 4 options each, the recommended option first and marked "(Recommended)", each option saying what the carrier, customer, or rep would experience); otherwise ask in chat as a numbered list and stop. Technical choices (where the rule goes, how to word a scenario note, which trial count) are decided here and noted. A standing-red entry is never covered by a general go: it is added only when the user picked the cell in the multi-select question or named it in chat.
 
 ### Fix, per case
 
@@ -137,4 +137,4 @@ Next, on your go:
 Then /watch <pr> (or gh run rerun <run> --failed) to see the sample re-run.
 ```
 
-Then stop and wait. On go: push the branch from the worktree (`git push origin <headRefName>`, never force, never another branch), write the Linear text with the Linear MCP (`save_comment` / `save_issue`), add the standing reds the user named, in their own `fix(evals):` commit, and report the pushed head, the Linear URL, and the entry ids in one line. A go that names one item does only that item.
+Then ask with the structured question tool: push and post the Linear text (Recommended), push only, post only, or neither yet, plus the standing-red multi-select again for any cell proposed since step 1. On that answer: push the branch from the worktree (`git push origin <headRefName>`, never force, never another branch), write the Linear text with the Linear MCP (`save_comment` / `save_issue`), add the standing reds the user named, in their own `fix(evals):` commit, and report the pushed head, the Linear URL, and the entry ids in one line. A go that names one item does only that item.

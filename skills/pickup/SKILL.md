@@ -64,10 +64,10 @@ Open questions — every product decision (what a carrier, customer, or rep sees
                questions here; they get decided in step 2 and noted.
 Not read     — links that could not be opened, environments not checked, things inferred.
 Next         — the branch and worktree step 2 would create per ticket, in the order it would
-               work them. Then: "say go, or name the tickets, to start."
+               work them. Then the go question below.
 ```
 
-Stop and wait. Do not create a branch, a worktree, or a file, do not comment on Linear or move its state, and do not start work because the context looks clear.
+Then ask the go with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options): start every ticket in the order above (Recommended), start only the tickets named, or stop here. Wait for that answer. Do not create a branch, a worktree, or a file, do not comment on Linear or move its state, and do not start work because the context looks clear.
 
 # Step 2: work
 

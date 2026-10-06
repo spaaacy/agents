@@ -7,7 +7,7 @@ Scope: $ARGUMENTS if given (`worktrees`, `databases`, `migrations`, or a repo pa
 
 Flow: this is the end of the lifecycle. The worktrees it removes are the ones `/pickup`, `/address-review` and `/watch` created, and `/linear-sweep` has usually just confirmed their PRs shipped. It never touches a worktree whose PR is still being worked on in another skill without showing what is in it first.
 
-Two phases. **Phase 1 always runs and changes nothing except the step 0 sync**: gather the facts below and print one plain-English report with a numbered list of proposed actions. **Phase 2 runs only the actions the user approves by number (or "all")**. Never delete a worktree with uncommitted changes, never drop a database, never `down -v`, and never force anything without that approval. Say what you did not check.
+Two phases. **Phase 1 always runs and changes nothing except the step 0 sync**: gather the facts below and print one plain-English report with a numbered list of proposed actions, then ask for the approval with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options), multi-select: one option per group that has proposals (worktrees, databases, migrations) plus "all of it", the safest set marked (Recommended), individual numbers through the free-text answer; a `down -v` is always its own option, never inside "all". **Phase 2 runs only the actions that answer approves**. Never delete a worktree with uncommitted changes, never drop a database, never `down -v`, and never force anything without that approval. Say what you did not check.
 
 ## 0. Fetch and pull latest
 

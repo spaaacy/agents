@@ -62,7 +62,7 @@ Open with one line: `<n> findings: <n> confirmed · <n> partly · <n> product ca
    Plan: <the smallest fix, or "no change: <why>", or "your call: <the question>">
 ```
 
-End with **Not verified** (anything inferred rather than checked, tests not run) and the product questions that step 2 will ask. Then stop and wait. Say nothing about starting the fixes on your own.
+End with **Not verified** (anything inferred rather than checked, tests not run) and the product questions that step 2 will ask. Then ask the one question that ends step 1 with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options): address every confirmed finding (Recommended), address only the findings named, or stop here. A task request earlier in the conversation is not an answer; wait for this one. Say nothing about starting the fixes on your own.
 
 ## Step 2: address
 
@@ -104,4 +104,4 @@ Next, on your go:
 Reply "go" for both, or name one. After the push: /verify-fixes <pr> in a fresh conversation.
 ```
 
-Then stop and wait. The two items are one ask and both need the go: a task request earlier in the conversation is not a go, and neither is silence. On go: post each reply to its own thread (`gh api repos/<owner>/<repo>/pulls/<number>/comments/<databaseId>/replies -f body=...` for inline threads, `gh pr comment` otherwise), push the branch from the worktree (`git push origin <headRefName>`, never force, never a different branch), then report the reply URLs and the pushed head in one line and stop. Resolve threads, re-request review, or edit the PR body only when the user asks for that too. A go that names one item does only that item and leaves the other as the next ask.
+Then ask it with the structured question tool: post the replies and push (Recommended), post the replies only, push only, or neither yet. The two items are one ask and both need that answer: a task request earlier in the conversation is not a go, and neither is silence. On go: post each reply to its own thread (`gh api repos/<owner>/<repo>/pulls/<number>/comments/<databaseId>/replies -f body=...` for inline threads, `gh pr comment` otherwise), push the branch from the worktree (`git push origin <headRefName>`, never force, never a different branch), then report the reply URLs and the pushed head in one line and stop. Resolve threads, re-request review, or edit the PR body only when the user asks for that too. A go that names one item does only that item and leaves the other as the next ask.
