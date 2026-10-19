@@ -11,6 +11,7 @@ Two steps, always in order, each ending with a stop:
 2. **Work**: runs only when the user says so after step 1 ("go", "start", or this skill again with keys). If step 1 has not run in this conversation, run it first and stop there.
 
 Flow: this is the first skill in the PR lifecycle. It ends with a draft PR; the author then runs `/review <pr>` on it, `/watch <pr>` keeps it green while reviewers read it (an `Eval sample` red there is `/fix-evals <pr>`), their comments are worked with `/address-review <pr>` and checked with `/verify-fixes <pr>`, the user merges, `/deploy` ships it and `/linear-sweep` moves the ticket. The worktree this skill creates is the one every later skill reuses, and `/cleanup` removes it once the PR has shipped.
+To put the main checkouts on this ticket's stack and remove the approved worktrees, use `/spotlight <ticket>`.
 
 # Step 1: context
 
