@@ -9,7 +9,7 @@ Watch $ARGUMENTS: a PR number or URL, else the open PR for the current branch (`
 
 One invocation is one tick. Under Claude Code, run it as `/loop /watch <pr>` so the session re-checks on its own; each tick ends by scheduling the next wake-up (5 to 10 minutes while checks are running, 20 to 30 minutes while waiting on a human review, stop when done). In a client with no loop, one tick is the whole run: report and tell the user to run it again later.
 
-Flow: this runs beside the review loop, not inside it. It owns CI and mergeability only; review findings are `/address-review`'s, a red `Eval sample` with confirmed regressions is `/fix-evals <pr>`'s, and the merge is the user's. It reuses the worktree `/pickup` or `/address-review` made and never creates a second one on the same branch. When the PR is merged, `/deploy` ships it on the next release and `/linear-sweep` moves the ticket.
+Flow: this runs beside the review loop, not inside it. It owns CI and mergeability only; review findings are `/address-review`'s, a red `Eval sample` with confirmed regressions is `/fix-evals <pr>`'s, and the merge is the user's. Bringing a whole ticket's PRs level with `development` at once (after a sibling merges) is `/rebase <ticket>`, which hands back here. It reuses the worktree `/pickup` or `/address-review` made and never creates a second one on the same branch. When the PR is merged, `/deploy` ships it on the next release and `/linear-sweep` moves the ticket.
 
 ## 1. Read the state
 
