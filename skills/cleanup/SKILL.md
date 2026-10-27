@@ -58,7 +58,7 @@ docker compose exec -T -e POSTGRES_DB=envoy_headref api poetry run poe migration
 ```
 (reuse a scratch DB from step 2 if one is already at head). Then `comm -13` the two sides for `information_schema.columns`, `pg_indexes`, `pg_constraint`, and `pg_type where typtype='e'` plus enum labels. Missing objects map to specific revisions: repair each with `alembic stamp <parent_of_skipped>` → `alembic upgrade <skipped_revision>` → `alembic stamp head` (a plain stamp-back-and-upgrade re-runs applied revisions and errors). For a stray index, constraint, or enum value far back in the chain, apply the DDL by hand with psql instead. Extra columns or tables the dev DB has that head does not are feature-branch leftovers; leave them, SQLAlchemy only selects modeled columns. `alembic check` is not a reliable read in this repo; trust the diff. Drop `envoy_headref` when done.
 
-**d. Wide drift or the user wants a clean slate.** Offer, never run unasked: `docker compose down -v && docker compose up -d` recreates the DB from scratch (the api entrypoint migrates on startup). It also wipes `envoy_checkpoint` and all local data, so say that in the offer.
+**d. Wide drift or the user wants a clean slate.** Offer, never run unasked: `docker compose down`, then `rm -rf dockerdata/postgres-data` (Postgres data is a gitignored bind mount there; `docker compose down -v` only removes the datadog and logs volumes and leaves every database in place), then `docker compose up -d` recreates the DB from scratch (the api entrypoint migrates on startup, about a minute). It also wipes `envoy_checkpoint` and all local data, so say that in the offer.
 
 Finish by re-running the stamp/head check and printing before → after.
 
