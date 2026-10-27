@@ -3,3 +3,4 @@ mcp/secrets.env
 .brainrot-off
 __pycache__/
 skills/synced/
+slack-pr-review/state/

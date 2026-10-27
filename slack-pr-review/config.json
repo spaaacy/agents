@@ -1,0 +1,18 @@
+{
+  "channel_id": "C0B2JHDCQ6M",
+  "channel_name": "devs",
+  "user_id": "U0B11TF094H",
+  "owner": "envoy-ai",
+  "github_login": "spaaacy",
+  "codex": "/Users/aakifmohamed/.local/bin/codex",
+  "gh": "/opt/homebrew/bin/gh",
+  "poll_seconds": 60,
+  "review_timeout_seconds": 5400,
+  "local_repos": {
+    "envoy-ai/envoyai-backend": "/Users/aakifmohamed/dev/envoyai-backend",
+    "envoy-ai/envoyai-web": "/Users/aakifmohamed/dev/envoyai-web",
+    "envoy-ai/envoyai-chrome-plugin": "/Users/aakifmohamed/dev/envoyai-chrome-plugin",
+    "envoy-ai/envoyai-chat-ui": "/Users/aakifmohamed/dev/envoyai-chat-ui",
+    "envoy-ai/ci-workflows": "/Users/aakifmohamed/dev/ci-workflows"
+  }
+}
