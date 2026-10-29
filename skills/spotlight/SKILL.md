@@ -7,9 +7,9 @@ Target: `$ARGUMENTS`. A Linear key (`ENG-1234`) or Linear URL; a GitHub PR URL o
 
 Scope: the main checkouts at `~/dev/envoyai-backend`, `~/dev/envoyai-web`, `~/dev/envoyai-chrome-plugin` and `~/dev/envoyai-chat-ui`. Include `~/dev/ci-workflows` only when the ticket's PRs or stack touch it. Resolve these to absolute paths once; every git command uses `git -C <absolute-repo-or-worktree>`, every worktree path is absolute, and parallel shell calls never use a bare `cd`.
 
-Flow: this puts work `/pickup` already opened in front of you in the main checkouts. It can remove every linked worktree, including other tickets' work, but only after showing what each holds and getting the user's choice. `/cleanup` owns database and leftover-directory cleanup; `/watch` owns keeping the PRs green. This skill does neither.
+Flow: this puts work `/pickup` already opened in front of you in the main checkouts. It can remove every linked worktree, including other tickets' work, but only after showing what each holds and getting the user's choice. `/cleanup` owns leftover-directory and database cleanup, with one exception here: a local dev database that is only behind the backend checkout's new migrations, which this skill brings forward when the answer approves it (a switch is what leaves it behind, and the api then refuses to boot). Everything messier is `/cleanup migrations`. `/watch` owns keeping the PRs green; this skill does not.
 
-Two phases. **Phase 1 always runs first**: read the stack and local state, changing nothing except `git -C <repo> fetch --prune origin` and the requested `git -C <repo> worktree prune` metadata cleanup. No pull, checkout, worktree removal or file edit. Print the report, then ask ONE approval question with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options). **Phase 2 runs only what that answer approves**. A request to "delete all worktrees" still gets the inventory first. Say what you did not check.
+Two phases. **Phase 1 always runs first**: read the stack and local state, changing nothing except `git -C <repo> fetch --prune origin` and the requested `git -C <repo> worktree prune` metadata cleanup. Read-only reads of the local docker database are allowed. No pull, checkout, worktree removal, migration or file edit. Print the report, then ask ONE approval question with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options). **Phase 2 runs only what that answer approves**. A request to "delete all worktrees" still gets the inventory first. Say what you did not check.
 
 # Phase 1: inspect
 
@@ -48,6 +48,14 @@ For each main checkout, read its branch, HEAD, and tracked changes with `git -C 
 
 If a local target branch exists, compare it with its fetched remote using `git -C <repo> rev-list --left-right --count <target>...origin/<target>` (local-only, remote-only). With local-only commits, the remote SHA is not necessarily where it would land: show the local SHA and both counts, and refuse that repo unless an ordinary fast-forward can reach the reported target. Never silently discard local commits or promise a remote SHA when the local branch is ahead. Check the feature branch tracks `origin/<target>`; a different configured upstream is a refusal, not permission to pull some other branch or reconfigure it.
 
+**The backend's local database.** Read it from the docker stack, which is local by construction; never through the `pg-readonly` MCP or any configured connection, which point at production or staging. With `B=<absolute backend path>`:
+
+- Stamp: `docker compose -f $B/docker-compose.yaml exec -T postgres psql -U envoy -d envoy -Atc "select version_num from alembic_version"`.
+- Is the stamp in the target's chain: `git -C $B grep -l "<stamp>" <target-sha> -- alembic/versions` (a hit means the target has that revision; no hit means a revision only another branch has, or one renamed since).
+- Is the api up: `docker compose -f $B/docker-compose.yaml ps api` for its health, and `docker compose -f $B/docker-compose.yaml logs --tail 50 api` for a schema refusal ("Database schema is BEHIND this build"). An api that already refuses to boot was behind before this switch; say so, it is not this switch's doing.
+
+The stack not running, or a read that fails, is **local database not read**, never "current". Whether the target's head is ahead of the stamp is decided in phase 2, inside the api container, once the checkout holds the target's migrations.
+
 ## 4. Report, ask once, wait
 
 Answer first: `<KEY> — <n> linked worktrees, <n> this ticket's; <repo> targets <branch> (#<pr>), ...`. One line per worktree and one per main checkout, plus changed-file details where needed:
@@ -60,10 +68,15 @@ Worktrees
     changed: <paths>
 Main checkouts
   <repo>: <current>@<sha> → <target>@<sha> (#<pr> or all merged / no PRs); tracked changes: <n>; <refusal if any>
-Not checked: <unread repos, local database migration state, dependencies, other omissions>
+Local database
+  stamp <revision> | in the target's chain | not in the target's chain → /cleanup migrations | not read: <why>
+  api: healthy | refusing to boot: <the log line> | not running
+Not checked: <unread repos, dependencies, other omissions>
 ```
 
-Then ONE `AskUserQuestion`, single-select: **remove all worktrees**, **only this ticket's**, or **stop**. Each removal option also means move the main checkouts to the reported targets where safe; say that in its description. Put the recommended option first and mark it `(Recommended)`: "remove all worktrees" only when ALL are verified clean and pushed; otherwise recommend "only this ticket's" if that removes a verified-clean, pushed set, or "stop" if no such set exists. Always call out that "all" includes other tickets' work.
+Then ONE `AskUserQuestion` call. Its first question, single-select: **remove all worktrees**, **only this ticket's**, or **stop**. Each removal option also means move the main checkouts to the reported targets where safe; say that in its description. Put the recommended option first and mark it `(Recommended)`: "remove all worktrees" only when ALL are verified clean and pushed; otherwise recommend "only this ticket's" if that removes a verified-clean, pushed set, or "stop" if no such set exists. Always call out that "all" includes other tickets' work.
+
+When the local database's stamp was read and is in the target's chain, the same call carries a second question: **bring the local database up to the target's migrations if it is behind** (Recommended: forward only, inside the api container, then the api restarts on its own) or **leave it**. Its options say that "leave it" can leave the api refusing to boot. No second question when the stamp is not in the target's chain, unreadable, or the stack is down; say `/cleanup migrations` in the report instead.
 
 Neither broad option approves deleting a tree with uncommitted or unpushed work, no upstream, or unreadable state. Those stay unless the free-text answer explicitly names each path or uniquely identified branch after seeing its warning. Unknown state must become readable before any removal. Free text can also choose an ambiguous target or explicitly request a branch deletion. Keep local branches by default. Wait for the answer; do not run phase 2 while the question is pending. An explicit phase-1-only dry run ends with the proposed question recorded in its report, without presenting a destructive approval or running phase 2.
 
@@ -91,7 +104,14 @@ Run the pull only after a successful switch. If a local feature branch has no up
 
 Compare the old and actual final SHA, not just branch names. On web and chrome-plugin, `git -C <repo> diff --name-only <old-sha> <new-sha> -- package-lock.json`: if changed, say `npm ci` is needed; do not run it. On backend, the same check for `poetry.lock`: say it changed, never run `poetry install`.
 
-Inspect backend target migrations with `git -C <repo> ls-tree -r --name-only <new-sha> -- alembic/versions` and `git -C <repo> show <new-sha>:<migration-path>`; do not import application code or start containers for this check. Compare revision ancestry with the local database's `alembic_version` only through an already available, verified-local read-only database connection permitted by the repo rules. A production or staging connection is not the local database. If the local stamp is readable, name target revisions it lacks; an unknown or orphan stamp is a mismatch, never proof it is current. If no such connection is available, say **local database migration state not checked**, and name any newly introduced migration files as potentially needed. Never migrate, stamp, start a database, or run `az`.
+Then the backend's local database, from the docker stack only (same reads as phase 1; never a configured connection, which is production or staging). Run this whether or not the backend's SHA moved: the database can already be behind, as an api refusing to boot in phase 1 shows. With `B=<absolute backend path>` and the stamp re-read now:
+
+- `docker compose -f $B/docker-compose.yaml exec -T api alembic heads`. Two heads is a branch problem, not a local one: refuse, name `python scripts/check_single_migration_head.py`, change nothing.
+- `docker compose -f $B/docker-compose.yaml exec -T api alembic history -r <stamp>:heads`. It lists the revisions the database lacks; empty means current; an error means the stamp is not in this chain.
+- **Behind, and the answer approved the upgrade:** `docker compose -f $B/docker-compose.yaml exec -T api poetry run poe migration-upgrade` (never from the host: it cannot resolve the `postgres` hostname). Then re-read the stamp, and confirm the api answers: `curl -s -o /dev/null -w '%{http_code}' --max-time 5 localhost:8000/api/openapi.json` returns 200 within about two minutes and `docker compose -f $B/docker-compose.yaml ps api` reads healthy. The api's code reload never re-runs migrations, which is why a switch leaves it refusing to boot. If the old branch lacks revisions the upgrade applied, say that switching back to it will leave the database ahead of that code.
+- **Behind and not approved, not in the chain, ahead of the code, a fork, or the stack down:** change nothing, report what you read, and name `/cleanup migrations`.
+
+Never stamp, downgrade, wipe, `docker compose down -v`, start a stack that is not running, or run `az`. A failed upgrade is reported with its error and left for `/cleanup migrations`; never repair it here.
 
 ## 4. Final report
 
@@ -101,8 +121,9 @@ Answer first: `<KEY> — removed <n> worktrees; moved <n> main checkouts; <n> re
 <repo>: <old branch>@<sha> → <new branch>@<sha>; <lockfile notice or refusal>
 Removed: <absolute worktree paths>
 Branches deleted: <names, or none; kept by default>
+Local database: <stamp before> → <stamp after> (upgraded | current | left: <why>); api <healthy | refusing to boot | not running>
 Refused / kept: <paths or repos and reasons>
-Not checked: <local database migration state, dependencies, unavailable reads>
+Not checked: <dependencies, unavailable reads>
 ```
 
-Stop there. Never touch Linear, push, merge, create or edit PRs, repair failing checks, or clean up databases. This skill changes local checkouts and approved worktrees only.
+Stop there. Never touch Linear, push, merge, create or edit PRs, repair failing checks, or clean up databases beyond the approved forward upgrade. This skill changes local checkouts, approved worktrees, and, when approved, the local database's migrations only.
