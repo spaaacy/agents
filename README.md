@@ -23,7 +23,7 @@ The skills under `skills/` are one lifecycle, and each one names its neighbours 
   /review <pr>          the author's own pre-PR review (read-only)
     /post-review        posts it as one GitHub review, after "post"
     /digest             the plain-English rewrite of any review-shaped output
-  /product-tldr <pr>    what a PR delivers for carriers, reps and admins, no code (read-only)
+  /impact <pr>          what a PR delivers for carriers, reps and admins, no code (read-only)
   /watch <pr>           keeps CI green and the branch rebased; never merges
     /fix-evals <pr>     a red Eval sample, a red nightly, or a flaky scenario
   reviewers comment

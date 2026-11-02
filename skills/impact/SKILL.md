@@ -1,5 +1,5 @@
 ---
-name: product-tldr
+name: impact
 description: Explain what a pull request (or every open PR for a Linear ticket) delivers purely from the product perspective, as TL;DR bullet points - what changes for carriers, customers, reps and admins, the defaults and switches, who is left out, and what it takes to ship - with no code, file names or jargon. Read-only. Use when the user asks what a PR delivers, for a product summary or TL;DR of a PR, or what a change means for users.
 ---
 
