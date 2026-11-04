@@ -8,7 +8,7 @@ Target: `$ARGUMENTS`.
 - A GitHub PR number or URL: that PR and the open PRs stacked on it. A bare number is looked up in the current repo first, then `envoyai-web`, `envoyai-chrome-plugin`, `envoyai-chat-ui` (backend PRs are in the 2000s, the others are lower; never guess across repos, ask if two match).
 - A Linear key (`ENG-1234`) or Linear URL: every open PR for that ticket across the repos.
 - `nightly`, one or more eval scenario ids (`in_esc_021`, or `in_esc_021.email-prompt` to pin the target), a GitHub Actions run id (`run 37505277132`), or pasted eval output (a step summary, a check title, a sticky `<!-- evalkit-summary -->` comment): evals only. Go straight to `evals.md` in this folder; there is no CI loop.
-- Nothing: the open PR for the current branch (`gh pr view --json number`). No PR means ask which with the structured question tool and stop.
+- Nothing: the PR this conversation is about (`Shared skill arguments` in `~/.agents/AGENTS.md`), else the open PR for the current branch (`gh pr view --json number`). No PR means ask which with the structured question tool and stop.
 - A trailing `triage` stops evals after the triage report, changing nothing.
 - A trailing `rebase`, or a request that says rebase, bring up to date, catch up with development, or "do the same" after a sibling merged: bring every PR level with its base this run, even when GitHub does not say it is behind.
 

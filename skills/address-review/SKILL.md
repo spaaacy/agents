@@ -3,7 +3,7 @@ name: address-review
 description: Work through the review comments left on a pull request. It verifies every finding against the current code and reports which are real, asks the user only the product calls, then fixes the confirmed findings, pushes the branch, and posts a reply on every finding, without stopping for a go. Use when the user asks to verify, check, triage, or address PR review comments or feedback.
 ---
 
-Target: $ARGUMENTS. A PR number or URL is the PR; a trailing `check` (or a request to only verify) stops after step 1. Nothing means the open PR for the current branch (`gh pr view --json number`); if there is none, say so and stop. The repo is the one in the current directory.
+Target: $ARGUMENTS. A PR number or URL is the PR; a trailing `check` (or a request to only verify) stops after step 1. Nothing means the PR this conversation is about (`Shared skill arguments` in `~/.agents/AGENTS.md`), else the open PR for the current branch (`gh pr view --json number`); if there is none, say so and stop. The repo is the one in the current directory.
 
 Two steps, always in order:
 

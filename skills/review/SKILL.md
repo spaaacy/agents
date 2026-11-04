@@ -3,7 +3,7 @@ name: review
 description: Pre-PR self-review of a branch or PR. Product regressions and unrequested behavior changes first, then verified engineering findings ranked by blast radius.
 ---
 
-Review $ARGUMENTS. A PR number or PR URL means `gh pr view` + `gh pr diff` (both accept either form); a branch name is diffed against the repo's default branch; nothing means the current branch against its base, including uncommitted changes. Read-only: never edit.
+Review $ARGUMENTS. A PR number or PR URL means `gh pr view` + `gh pr diff` (both accept either form); a branch name is diffed against the repo's default branch; nothing means the PR or branch this conversation is about (`Shared skill arguments` in `~/.agents/AGENTS.md`), else the current branch against its base, including uncommitted changes. Read-only: never edit.
 
 This is the author's own review before the PR goes up. The reader wrote the code with AI assistance and is worried about product changes slipping in unnoticed, so be blunt, lead with behavior, and never soften a finding because the author is the reader.
 

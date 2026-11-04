@@ -3,7 +3,7 @@ name: pickup
 description: Pick up a Linear ticket or project in two steps. First gather the full context - the ticket and its whole comment thread, the PRs already up, the code as it stands, past work on it - and report, changing nothing. Then, only after the user says go, create a worktree per ticket, build it test-first, and open a draft PR. Use when the user points at a Linear ticket or project, or asks to pick up, start, or work on one.
 ---
 
-Target: `$ARGUMENTS`. An issue key (`ENG-2130`), a project key (`P-ENG-69`), a project name, or a Linear URL. A trailing `go` / `work` / `start`, or a list of keys, means step 2. Nothing means ask which ticket and stop.
+Target: `$ARGUMENTS`. An issue key (`ENG-2130`), a project key (`P-ENG-69`), a project name, or a Linear URL. A trailing `go` / `work` / `start`, or a list of keys, means step 2. Nothing means the ticket this conversation is about (`Shared skill arguments` in `~/.agents/AGENTS.md`); only when there is none, ask which ticket and stop.
 
 Two steps, always in order, each ending with a stop:
 

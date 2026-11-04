@@ -35,6 +35,8 @@ The per-turn hook sends this section in Claude Code and current Codex; in a clie
 
 ## Shared skill arguments
 
+A skill run with no target works on the PR or ticket this conversation is already about, without asking: the one most recently named, run on by a skill, or worked on (in the chat or the conversation summary), else the one for the worktree branch the session is working in. The skill's own fallback (usually the open PR for the current branch) applies only when the conversation points at none. Ask which only when that finds nothing too, or the conversation covered several and the latest is not clear.
+
 Some shared skills use Claude Code's `$ARGUMENTS` notation. In Codex and other clients that do not substitute it, read it as the arguments the user supplied with the skill request. Never treat the literal placeholder as input. Codex skills can be invoked with `$skill-name` or an ordinary request; slash-command examples in shared skills describe the same request, not a separate Codex command.
 
 ## Library and framework questions: use Context7
