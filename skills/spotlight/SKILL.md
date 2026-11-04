@@ -1,15 +1,19 @@
 ---
 name: spotlight
-description: Put the main checkouts on one ticket's PR stack and remove the worktrees in two phases - report first, then act on its own when every worktree it would remove is verified clean and pushed, and ask only when something is not. It always finishes with the local docker stack running, migrated to the switched-to checkout, and the api answering. Use for "/spotlight ENG-1234", "spotlight this ticket", "delete all worktrees and check out the stack", or "put the main branches on top of a ticket/PR".
+description: Put the main checkouts on one ticket's PR stack and remove the worktrees in two phases - report first, then act on its own: it removes only worktrees verified clean and pushed, keeps and lists the rest, and never asks. It always finishes with the local docker stack running, migrated to the switched-to checkout, and the api answering. Use for "/spotlight ENG-1234", "spotlight this ticket", "delete all worktrees and check out the stack", or "put the main branches on top of a ticket/PR".
 ---
 
 Target: `$ARGUMENTS`. A Linear key (`ENG-1234`) or Linear URL; a GitHub PR URL or number also works when its title, branch or body names the ticket. Nothing means the ticket this conversation is about (`Shared skill arguments` in `~/.agents/AGENTS.md`); only when there is none, ask which ticket with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options) and stop.
 
 Scope: the main checkouts at `~/dev/envoyai-backend`, `~/dev/envoyai-web`, `~/dev/envoyai-chrome-plugin` and `~/dev/envoyai-chat-ui`. Include `~/dev/ci-workflows` only when the ticket's PRs or stack touch it. Resolve these to absolute paths once; every git command uses `git -C <absolute-repo-or-worktree>`, every worktree path is absolute, and parallel shell calls never use a bare `cd`.
 
-Flow: this puts work `/pickup` already opened in front of you in the main checkouts. It can remove every linked worktree, including other tickets' work, but only after showing what each holds, and on its own only when every one is verified clean and pushed. `/cleanup` owns leftover-directory and database cleanup; this skill only leaves the local docker stack up to date and running after the switch, through `~/.agents/skills/cleanup/local-stack.md` (a switch is what leaves the database behind, and the api then refuses to boot). Anything that procedure leaves to the user is `/cleanup migrations`. `/fix` owns keeping the PRs green; this skill does not.
+Flow: this puts work `/pickup` already opened in front of you in the main checkouts. It can remove every linked worktree, including other tickets' work, but only after showing what each holds, and only the ones verified clean and pushed. `/cleanup` owns leftover-directory and database cleanup; this skill only leaves the local docker stack up to date and running after the switch, through `~/.agents/skills/cleanup/local-stack.md` (a switch is what leaves the database behind, and the api then refuses to boot). Anything that procedure leaves to the user is `/cleanup migrations`. `/fix` owns keeping the PRs green; this skill does not.
 
-Two phases. **Phase 1 always runs first**: read the stack and local state, changing nothing except `git -C <repo> fetch --prune origin` and the requested `git -C <repo> worktree prune` metadata cleanup. Read-only reads of the local docker database are allowed. No pull, checkout, worktree removal, migration or file edit. Print the report. **When every linked worktree is verified clean and pushed, phase 2 runs straight away with no question**: remove all of them (or only this ticket's, when the request said `only` or to keep other tickets' work), move the main checkouts, and leave the local stack up to date and running. Otherwise ask ONE approval question with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options), and **phase 2 runs only what that answer approves**. A request to "delete all worktrees" still gets the inventory first. Say what you did not check.
+Two phases. **Phase 1 always runs first**: read the stack and local state, changing nothing except `git -C <repo> fetch --prune origin` and the requested `git -C <repo> worktree prune` metadata cleanup. Read-only reads of the local docker database are allowed. No pull, checkout, worktree removal, migration or file edit. Print the report. **Phase 2 then runs straight away, with no question**, on a removal set decided by these rules, not asked:
+- Every linked worktree verified clean and pushed: remove all of them (only this ticket's when the request said `only` or to keep other tickets' work).
+- Some worktree dirty, unpushed, without an upstream, or unreadable: remove this ticket's clean, pushed worktrees only (every clean, pushed one when the request said `all`). Keep the flagged ones and list them in the report. A flagged tree is removed only when the request names its path or branch, after a report that showed its warning.
+- None of this ticket's worktrees is clean and pushed, and the request did not say `all`: remove nothing, move nothing, and stop after the report, saying what has to be committed or pushed first.
+Then move the main checkouts and leave the local stack up to date and running. A request to "delete all worktrees" still gets the inventory first. Say what you did not check.
 
 # Phase 1: inspect
 
@@ -40,7 +44,7 @@ For each linked worktree, record:
 - Uncommitted change count: `git -C <wt> status --porcelain` (include untracked files). Count status entries, not lines in a filename; `-z` is safe for parsing. For a dirty tree, also show the changed paths before asking for approval.
 - Unpushed commit count: `git -C <wt> rev-list --count '@{u}..HEAD'`. Check the tracking ref exists first; no upstream or a missing ref is **NO UPSTREAM — not verified pushed**, never zero. A detached worktree has the same protection. A failed status or commit read is unknown, never clean.
 
-Flag uncommitted work and unpushed commits loudly on the worktree's line. A clean tree can still hold unpushed work. Record the HEAD and status now so phase 2 can spot changes after approval.
+Flag uncommitted work and unpushed commits loudly on the worktree's line. A clean tree can still hold unpushed work. Record the HEAD and status now so phase 2 can spot changes since the report.
 
 ## 3. Inventory the main checkouts
 
@@ -56,7 +60,7 @@ If a local target branch exists, compare it with its fetched remote using `git -
 
 The stack not running, or a read that fails, is **local database not read**, never "current". Whether the target's head is ahead of the stamp is decided in phase 2, inside the api container, once the checkout holds the target's migrations.
 
-## 4. Report, ask once, wait
+## 4. Report
 
 Answer first: `<KEY> — <n> linked worktrees, <n> this ticket's; <repo> targets <branch> (#<pr>), ...`. One line per worktree and one per main checkout, plus changed-file details where needed:
 
@@ -74,23 +78,23 @@ Local database
 Not checked: <unread repos, dependencies, other omissions>
 ```
 
-Then, only when some worktree is dirty, unpushed, has no upstream, or is unreadable, ONE `AskUserQuestion` call. Its first question, single-select: **remove all worktrees**, **only this ticket's**, or **stop**. Each removal option also means move the main checkouts to the reported targets where safe; say that in its description. Put the recommended option first and mark it `(Recommended)`: "remove all worktrees" only when ALL are verified clean and pushed; otherwise recommend "only this ticket's" if that removes a verified-clean, pushed set, or "stop" if no such set exists. Always call out that "all" includes other tickets' work.
+End the report with the removal set phase 2 is about to take (the rule from the top that picked it), then go straight to phase 2. Never ask which set to remove, and never ask about the local database or the stack: both are decided by the rules here and in `local-stack.md`.
 
-The local stack is never a question: phase 2 always ends with `local-stack.md`, whichever removal option was picked.
+Nothing approves deleting a tree with uncommitted or unpushed work, no upstream, or unreadable state except a request that names its path or uniquely identified branch after seeing its warning. Unknown state must become readable before any removal. Keep local branches unless the request explicitly asks to delete one. An explicit phase-1-only dry run ends with the report and the removal set phase 2 would take, and changes nothing.
 
-Neither broad option approves deleting a tree with uncommitted or unpushed work, no upstream, or unreadable state. Those stay unless the free-text answer explicitly names each path or uniquely identified branch after seeing its warning. Unknown state must become readable before any removal. Free text can also choose an ambiguous target or explicitly request a branch deletion. Keep local branches by default. Wait for the answer; do not run phase 2 while the question is pending. An explicit phase-1-only dry run ends with the proposed question recorded in its report, without presenting a destructive approval or running phase 2.
-
-# Phase 2: apply the answer
+# Phase 2: apply the removal set
 
 ## 1. Remove the worktrees first
 
-Re-read each worktree about to be removed: HEAD, changes and unpushed count. If it gained work or changed since the report, keep it and report why; the old inventory, and any approval of it, does not cover new work. "Only this ticket's" includes only paths the report explicitly classified as belonging to this ticket's resolved stack. Other trees stay.
+Re-read each worktree about to be removed: HEAD, changes and unpushed count. If it gained work or changed since the report, keep it and report why; the old inventory does not cover new work. "Only this ticket's" includes only paths the report explicitly classified as belonging to this ticket's resolved stack. Other trees stay.
 
 Remove each path with `git -C <repo> worktree remove <absolute-path>`. **Never `--force`, never `rm -rf`.** An explicitly named dirty tree can still be refused by ordinary git removal; report that refusal and leave it, never clean it up to make the command succeed. Locked or unreadable worktrees stay. Finish removals before any checkout switch, because git refuses to check out a branch another worktree holds. A retained worktree holding the target means that main checkout is refused; never bypass the lock or choose another target.
 
-Keep local branches unless the answer explicitly asked to delete one. Even then, prove the branch is fully contained in its existing remote tracking ref with `git -C <repo> merge-base --is-ancestor <branch> <remote-tracking-ref>`, then use `git -C <repo> branch -d <branch>` only. No remote ref, unpushed commits, a still-checked-out branch, a selected target branch, or a refused `-d`: keep it and say why. Never `-D`, and never delete a remote branch. Say which local branches were deleted.
+Keep local branches unless the request explicitly asked to delete one. Even then, prove the branch is fully contained in its existing remote tracking ref with `git -C <repo> merge-base --is-ancestor <branch> <remote-tracking-ref>`, then use `git -C <repo> branch -d <branch>` only. No remote ref, unpushed commits, a still-checked-out branch, a selected target branch, or a refused `-d`: keep it and say why. Never `-D`, and never delete a remote branch. Say which local branches were deleted.
 
 ## 2. Move each main checkout
+
+Backend first: when phase 1 found the local database's stamp NOT in the backend target's chain (a revision the target branch does not have), leave the backend checkout where it is and move the other repos as usual. Switching would strand the api: the target's code cannot start against a database stamped past its chain. Report `backend left on <branch>: the local database has <revision>, which <target> does not have`, then the way forward: `/fix <pr>` when the revision is on `development` and the PR is just behind it, otherwise that it moves once the branch carrying the revision merges. This is never a question.
 
 Re-read the main checkout's HEAD and tracked status immediately before switching. Refuse and report tracked changes, an unresolved target, an unverified remote, or a checkout changed since the report; do not fix them. Never stash, never `reset --hard`, never rebase, never force a switch. Untracked files stay; if they would be overwritten, let git refuse and report it.
 
