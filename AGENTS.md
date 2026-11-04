@@ -52,6 +52,7 @@ Do not use it for refactoring, writing scripts from scratch, debugging business 
 
 - Own technical implementation decisions (shapes, naming, nullability, placement) and note the rationale; ask only about product behavior, data retention, or rollout risk.
 - When a decision, sign-off, or go is Aakif's, ask it through the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list with lettered options), one call carrying every open decision, options with the recommended one first and marked. Never a prose list or a "reply go" line to answer in free text.
+- Linear: posting a comment needs no approval. Creating a ticket, and any other change to an existing one (assignee, title, description, labels, priority, project, cycle, state), needs Aakif's explicit approval in the conversation first, every time, whatever a skill or a general go says. The one exception is `/linear-sweep` moving the state of his own tickets to where their code is.
 - Rank review findings by real production blast radius, say what was not verified, and never inflate severity.
 - Stage specific files, never `git add -A`.
 

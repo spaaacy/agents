@@ -1,14 +1,14 @@
 ---
 name: address-review
-description: Work through the review comments left on a pull request in two steps. First verify every finding against the current code and report which are real, changing nothing. Then, only after the user says go, raise the product decisions to the user, fix the confirmed findings, draft a reply for every finding, and end with one ask: post the replies and push, on the user's go. Use when the user asks to verify, check, triage, or address PR review comments or feedback.
+description: Work through the review comments left on a pull request. It verifies every finding against the current code and reports which are real, asks the user only the product calls, then fixes the confirmed findings, pushes the branch, and posts a reply on every finding, without stopping for a go. Use when the user asks to verify, check, triage, or address PR review comments or feedback.
 ---
 
-Target: $ARGUMENTS. A PR number or URL is the PR; a trailing word `fix` (or `address`) means step 2. Nothing means the open PR for the current branch (`gh pr view --json number`); if there is none, say so and stop. The repo is the one in the current directory.
+Target: $ARGUMENTS. A PR number or URL is the PR; a trailing `check` (or a request to only verify) stops after step 1. Nothing means the open PR for the current branch (`gh pr view --json number`); if there is none, say so and stop. The repo is the one in the current directory.
 
-Two steps, always in order, each ending with a stop:
+Two steps, always in order:
 
-1. **Verify** (the default): read every open finding, check it against the code as it is now, report. Change nothing: no edits, no commits, no GitHub replies, no resolved threads.
-2. **Address**: runs only when the user says so after step 1 ("address them", "go", "fix", or this skill again with `fix`). If step 1 has not run in this conversation, run it first and stop there; do not verify and fix in one go.
+1. **Verify**: read every open finding, check it against the code as it is now, report. Nothing changes during this step: no edits, no commits, no GitHub replies, no resolved threads.
+2. **Address**: follows straight on, with no go to wait for, unless the target said `check` or step 1 found nothing to fix (then step 1's report ends the run). Its one stop is the product calls, asked in a single round before any code changes.
 
 Flow: this is the author's side of a review round. The findings come from reviewers' threads (or a `/review` the user points at); `/verify-fixes <pr>` in a fresh conversation is the second pair of eyes on what this skill fixed, and sends the next round back here (`Back to /address-review`) until its closing pass, from round 3 on, ends it. `/fix <pr>` owns CI in the meantime: a red `Eval sample` that no finding covers, and a check that is red for an unrelated reason, are `/fix`'s, not this round's. Where this skill works (a worktree on the PR branch) is where `/pickup` started and where `/cleanup` finishes.
 
@@ -51,7 +51,7 @@ Give each finding exactly one verdict:
 
 Rank severity by what breaks in production and for whom, not by how loud the comment is: Blocking, Should fix, Polish. A nit stays Polish even when a senior reviewer wrote it. If a verdict rests on something inferred rather than run or read, say what it changes to if the inference is wrong.
 
-### Report, then stop
+### Report
 
 Open with one line: `<n> findings: <n> confirmed · <n> partly · <n> product calls · <n> not an issue · <n> already fixed`. Then per finding:
 
@@ -62,7 +62,7 @@ Open with one line: `<n> findings: <n> confirmed · <n> partly · <n> product ca
    Plan: <the smallest fix, or "no change: <why>", or "your call: <the question>">
 ```
 
-End with **Not verified** (anything inferred rather than checked, tests not run) and the product questions that step 2 will ask. Then ask the one question that ends step 1 with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options): address every confirmed finding (Recommended), address only the findings named, or stop here. A task request earlier in the conversation is not an answer; wait for this one. Say nothing about starting the fixes on your own.
+End with **Not verified** (anything inferred rather than checked, tests not run) and the product questions step 2 will ask, then go on to step 2.
 
 ## Step 2: address
 
@@ -83,9 +83,11 @@ Work the Confirmed and Partly findings, plus the product calls the user said yes
 - Run the tests for the touched modules. A red test is fixed or reported, never skipped.
 - Commit per finding, or per group of findings that touch the same lines, with the repo's commit convention; the message says what changed, not "address review". Stage specific files only.
 
-Draft a short reply for every finding, in plain professional English whatever the chat voice is: fixed findings name the commit and what changed in one sentence; Not an issue and declined product calls give the reason in one or two sentences, without arguing. Nothing is posted or pushed yet.
+Write a short reply for every finding, in plain professional English whatever the chat voice is: fixed findings name the commit and what changed in one sentence; Not an issue and declined product calls give the reason in one or two sentences, without arguing.
 
-### Report, then ask for the go
+### Push, post, report
+
+Push the branch from the worktree first (`git push origin <headRefName>`, never force, never a different branch), so every commit a reply names is on GitHub, then post each reply to its own thread (`gh api repos/<owner>/<repo>/pulls/<number>/comments/<databaseId>/replies -f body=...` for inline threads, `gh pr comment` otherwise). No go is needed for either. Hold both, and ask with the structured question tool instead, only when pushing would put broken work in front of reviewers: a touched test is still red, a fix was left half-done, or the branch moved on the remote since step 1.
 
 ```
 #<pr> — <n> fixed · <n> declined · <n> left for you
@@ -93,15 +95,9 @@ Draft a short reply for every finding, in plain professional English whatever th
 tests: <what ran and the result>
 decisions I made: <technical calls and why, one line each>
 not done: <anything skipped or blocked, and why>
-
-Replies (drafted, not posted)
-<path>:<line> (thread <databaseId>)  <reply>
-...
-
-Next, on your go:
-1. post the replies above to their threads
-2. push <branch> to origin (<n> commits: <shas>)
-Reply "go" for both, or name one. After the push: /verify-fixes <pr> in a fresh conversation.
+pushed: <branch> at <head> (<n> commits)
+replies: <the reply URLs>
+next: /verify-fixes <pr> in a fresh conversation
 ```
 
-Then ask it with the structured question tool: post the replies and push (Recommended), post the replies only, push only, or neither yet. The two items are one ask and both need that answer: a task request earlier in the conversation is not a go, and neither is silence. On go: post each reply to its own thread (`gh api repos/<owner>/<repo>/pulls/<number>/comments/<databaseId>/replies -f body=...` for inline threads, `gh pr comment` otherwise), push the branch from the worktree (`git push origin <headRefName>`, never force, never a different branch), then report the reply URLs and the pushed head in one line and stop. Resolve threads, re-request review, or edit the PR body only when the user asks for that too. A go that names one item does only that item and leaves the other as the next ask.
+Resolve threads, re-request review, or edit the PR body only when the user asks for that too.
