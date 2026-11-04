@@ -1,6 +1,6 @@
 ---
 name: cleanup
-description: Clean up the local dev machine - stale git worktrees and branches, leftover local Postgres databases, and a local docker database whose Alembic state has drifted from the migration chain. Reports first, destroys only after an explicit yes.
+description: Clean up the local dev machine - stale git worktrees and branches, leftover local Postgres databases, and a local docker database whose Alembic state has drifted from the migration chain. Reports first, then removes what is verified safe on its own and asks only about the risky rest.
 ---
 
 Scope: $ARGUMENTS if given (`worktrees`, `databases`, `migrations`, or a repo path), else everything, for the repo in the current directory (defaults to envoyai-backend; the worktree pass also covers envoyai-web, envoyai-chrome-plugin, envoyai-chat-ui).
@@ -8,7 +8,9 @@ Scope: $ARGUMENTS if given (`worktrees`, `databases`, `migrations`, or a repo pa
 Flow: this is the end of the lifecycle. The worktrees it removes are the ones `/pickup`, `/address-review` and `/fix` created, and `/linear-sweep` has usually just confirmed their PRs shipped. It never touches a worktree whose PR is still being worked on in another skill without showing what is in it first.
 For "wipe every worktree and sit the main checkouts on one ticket", use `/spotlight <ticket>`.
 
-Two phases. **Phase 1 always runs and changes nothing except the step 0 sync**: gather the facts below and print one plain-English report with a numbered list of proposed actions, then ask for the approval with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options), multi-select: one option per group that has proposals (worktrees, databases, migrations) plus "all of it", the safest set marked (Recommended), individual numbers through the free-text answer; a `down -v` is always its own option, never inside "all". **Phase 2 runs only the actions that answer approves**. Never delete a worktree with uncommitted changes, never drop a database, never `down -v`, and never force anything without that approval. Say what you did not check.
+Two phases. **Phase 1 always runs and changes nothing except the step 0 sync**: gather the facts below and print one plain-English report with a numbered list of actions, each marked `safe` or `needs you`. **Phase 2 runs every `safe` action straight away, with no go to wait for**, then asks about the `needs you` ones (if any) with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options), multi-select, one option per item or small group with what it would destroy in the description, individual numbers through the free-text answer, and runs only what that answer picks. A trailing `report` (or "dry run") stops after phase 1.
+
+`safe` is only this, each re-read right before it runs: a worktree with a clean tree whose branch is merged or whose PR is merged or closed (remove it, `git branch -d` the branch); a worktree with a clean tree, an upstream, and 0 unpushed commits whose PR is still open (remove it, keep the branch); a merged local branch with no worktree (`git branch -d`, which refuses anything unmerged); the always-safe and safe-when-their-worktree-is-gone databases in step 2, and scratch databases step 3 is not about to reuse; and migration case a (a forward upgrade of a stamp that is in the chain). Everything else is `needs you`: a dirty tree (show its files), a clean tree with unpushed commits or no upstream (its commits exist only here), a leftover directory git no longer knows about, unreadable state, migration cases b and c (stamp surgery), and case d (the clean-slate wipe, always its own option). Never delete a dirty tree, drop a database outside the safe list, wipe the database, or force anything without that answer. Say what you did not check.
 
 ## 0. Fetch and pull latest
 
@@ -78,5 +80,6 @@ Migrations
   stamp 370294b7b171 is not in the chain; head is 20260903_unusable_pw_hash_backfill
   5. stamp back to <parent> and upgrade (case b)
 Not checked: <...>
-Reply with the numbers to run, or "all".
+Running now (safe): 1, 2, 3, 4, 5
+Needs you: <numbers, asked next; or "nothing">
 ```
