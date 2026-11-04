@@ -88,7 +88,7 @@ hooks = true
 class HookTests(unittest.TestCase):
     def test_wrappers_emit_current_sections_from_any_directory(self):
         for script, heading in [
-            ("brainrot.sh", "Voice (default on)"),
+            ("brainrot.sh", "Voice"),
             ("style-reminder.sh", "Communication style"),
         ]:
             with self.subTest(script=script):
@@ -101,18 +101,16 @@ class HookTests(unittest.TestCase):
                 section = (ROOT / "AGENTS.md").read_text().split(f"## {heading}\n", 1)[1].split("\n## ", 1)[0].strip()
                 self.assertIn(section, payload["additionalContext"])
 
-    def test_toggle_overrides_prior_voice_and_restores_current_rules(self):
+    def test_voice_has_no_off_switch_and_reads_current_rules(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "AGENTS.md").write_text("## Voice (default on)\nFirst rule.\n")
-            flag = root / ".brainrot-off"
-            flag.touch()
-            off = hooks.reminder("Voice (default on)", root)
-            self.assertIn("brainrot is off", off["hookSpecificOutput"]["additionalContext"])
-            (root / "AGENTS.md").write_text("## Voice (default on)\nUpdated rule.\n")
-            flag.unlink()
-            on = hooks.reminder("Voice (default on)", root)
-            self.assertIn("Updated rule.", on["hookSpecificOutput"]["additionalContext"])
+            (root / "AGENTS.md").write_text("## Voice\nFirst rule.\n")
+            (root / ".brainrot-off").touch()  # the old off-file is ignored now
+            first = hooks.reminder("Voice", root)
+            self.assertIn("First rule.", first["hookSpecificOutput"]["additionalContext"])
+            (root / "AGENTS.md").write_text("## Voice\nUpdated rule.\n")
+            updated = hooks.reminder("Voice", root)
+            self.assertIn("Updated rule.", updated["hookSpecificOutput"]["additionalContext"])
 
 
 if __name__ == "__main__":
