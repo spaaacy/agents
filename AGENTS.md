@@ -70,6 +70,19 @@ Do not use it for refactoring, writing scripts from scratch, debugging business 
 - Rank review findings by real production blast radius, say what was not verified, and never inflate severity.
 - Stage specific files, never `git add -A`.
 
+## Running checks
+
+Tests, type checks and lint runs are most of an agent's wall time: the two weeks of sessions to 2026-11-04 spent about 15 hours in pytest, much of it paying the app's import cost again and again. So:
+
+- One test command per round. Put every test file the round needs in one call: each separate backend `pytest` call spends 15 to 30 seconds importing the app before it runs a single test.
+- Backend unit and integration runs take `-n 8`, as CI does. `-m db` runs stay serial, as CI runs them.
+- While fixing a failure, re-run only the failing test ids, not the whole batch. Never re-run a command when nothing it covers has changed since its last run.
+- A commit CI already passed is not re-tested locally: read `gh pr checks` and the run's log instead. Run locally only what changed after that commit, or what CI does not run (an agent-loop eval target outside the sample, e2e).
+- A run expected to take more than a minute goes in the background; keep working and read the result when it finishes.
+- Backend mypy: only the changed files, the way CI runs it, `mypy --no-site-packages --follow-imports=silent <files>`. Without `--no-site-packages` the locked mypy crashes inside an installed library (ddtrace, langsmith) after about 70 seconds and checks nothing. A branch without envoyai-backend #3045 still has the crashing pre-commit hook: run mypy by hand with the flag, then commit with `SKIP=mypy`.
+- Frontends: one `npx vitest run <files>` per round, and `svelte-check` once, before pushing.
+- Test secrets decrypt on their own (the `secrets/test.ejson` key is in `ejson-keys/`, which every worktree links). Never hand-seed `secrets/test.json`.
+
 ## Tools
 
 - For connection audits, distinguish local configuration, account installation/sign-in, and tools exposed in the current session. An enabled flag or cached plugin directory is not proof that tools are available. Run `python3 ~/.agents/codex/check_connections.py` for the repo's declared Codex plugin connections; it checks a fresh runtime, so verify the current session's tool inventory separately. Do not claim a connection is ready from configuration alone, or ask the user to resend a link that is already in the conversation.

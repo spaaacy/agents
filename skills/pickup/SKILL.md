@@ -99,6 +99,7 @@ Red before green, every time the change has an observable behaviour:
 - **A production bug**: the reproduction is the test, and an incident-born case becomes a scenario with `provenance: incident` and its `source_id`.
 - **Skip it** for a change with no observable behaviour — a rename, a docs edit, a dependency bump, a generated file — and say in the report which tickets skipped it and why.
 - Never weaken a test, eval, lint rule, baseline, or type check to make something pass.
+- Run checks the way `Running checks` in `~/.agents/AGENTS.md` says: one batched test call per round, `-n 8` on the backend, only the failing ids while fixing, long runs in the background.
 
 ## Build
 
