@@ -1,6 +1,6 @@
 ---
 name: cleanup
-description: Clean up the local dev machine - stale git worktrees and branches, leftover local Postgres databases, and a local docker database whose Alembic state has drifted from the migration chain. Reports first, then removes what is verified safe on its own and asks only about the risky rest.
+description: Clean up the local dev machine - stale git worktrees and branches, leftover local Postgres databases, and a local docker database whose Alembic state has drifted from the migration chain. Reports first, then removes what is verified safe on its own and asks only about the risky rest, and always finishes with the local docker stack running, migrated to the backend checkout's newest revision, and the api answering.
 ---
 
 Scope: $ARGUMENTS if given (`worktrees`, `databases`, `migrations`, or a repo path), else everything, for the repo in the current directory (defaults to envoyai-backend; the worktree pass also covers envoyai-web, envoyai-chrome-plugin, envoyai-chat-ui).
@@ -10,7 +10,7 @@ For "wipe every worktree and sit the main checkouts on one ticket", use `/spotli
 
 Two phases. **Phase 1 always runs and changes nothing except the step 0 sync**: gather the facts below and print one plain-English report with a numbered list of actions, each marked `safe` or `needs you`. **Phase 2 runs every `safe` action straight away, with no go to wait for**, then asks about the `needs you` ones (if any) with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options), multi-select, one option per item or small group with what it would destroy in the description, individual numbers through the free-text answer, and runs only what that answer picks. A trailing `report` (or "dry run") stops after phase 1.
 
-`safe` is only this, each re-read right before it runs: a worktree with a clean tree whose branch is merged or whose PR is merged or closed (remove it, `git branch -d` the branch); a worktree with a clean tree, an upstream, and 0 unpushed commits whose PR is still open (remove it, keep the branch); a merged local branch with no worktree (`git branch -d`, which refuses anything unmerged); the always-safe and safe-when-their-worktree-is-gone databases in step 2, and scratch databases step 3 is not about to reuse; and migration case a (a forward upgrade of a stamp that is in the chain). Everything else is `needs you`: a dirty tree (show its files), a clean tree with unpushed commits or no upstream (its commits exist only here), a leftover directory git no longer knows about, unreadable state, migration cases b and c (stamp surgery), and case d (the clean-slate wipe, always its own option). Never delete a dirty tree, drop a database outside the safe list, wipe the database, or force anything without that answer. Say what you did not check.
+`safe` is only this, each re-read right before it runs: a worktree with a clean tree whose branch is merged or whose PR is merged or closed (remove it, `git branch -d` the branch); a worktree with a clean tree, an upstream, and 0 unpushed commits whose PR is still open (remove it, keep the branch); a merged local branch with no worktree (`git branch -d`, which refuses anything unmerged); the always-safe and safe-when-their-worktree-is-gone databases in step 2, and scratch databases step 3 is not about to reuse; and everything `local-stack.md` in this folder does on its own (starting or restarting the stack, a forward upgrade, moving the stamp past a revision whose objects are all already there). Everything else is `needs you`: a dirty tree (show its files), a clean tree with unpushed commits or no upstream (its commits exist only here), a leftover directory git no longer knows about, unreadable state, migration case b, case c whose objects are only partly there, and case d (the clean-slate wipe, always its own option). Never delete a dirty tree, drop a database outside the safe list, wipe the database, or force anything without that answer. Say what you did not check.
 
 ## 0. Fetch and pull latest
 
@@ -41,14 +41,14 @@ Drop with `DROP DATABASE "<name>" WITH (FORCE);` via the same psql.
 
 ## 3. Migration state of the dev database
 
-Run everything inside the api container; host-side `poe migration-upgrade` cannot resolve the `postgres` hostname and fails.
+Run everything inside the api container; host-side `poe migration-upgrade` cannot resolve the `postgres` hostname and fails. If the api is not running, step 4 starts it first (its startup is what migrates), and its log says which case this is.
 - Stamp: `docker compose exec -T postgres psql -U envoy -d envoy -Atc "select version_num from alembic_version"`.
 - Chain head: `docker compose exec -T api alembic heads` (two heads = a fork; run `python scripts/check_single_migration_head.py` and stop, that is a branch problem not a local one).
 - Is the stamp in the chain? `docker compose exec -T api alembic history | grep <stamp>`.
 
 Then pick the case:
 
-**a. Behind head, stamp in chain.** `docker compose exec api poetry run poe migration-upgrade`. Done.
+**a. Behind head, stamp in chain.** `docker compose exec api poetry run poe migration-upgrade`, or let step 4 restart the api. Done.
 
 **b. Stamp is not in the chain (orphan).** The DB was last migrated on a branch whose revision was renamed, dropped, or re-parented after merge. Find where it came from: `git log --all --oneline -S <stamp> -- alembic/versions` and read that file's `down_revision` from the commit that had it. Then `alembic stamp <down_revision>` inside the api container and `poe migration-upgrade`. If the orphan revision had created objects that a renamed successor now re-creates, the upgrade fails with "already exists"; handle per case c.
 
@@ -63,6 +63,10 @@ docker compose exec -T -e POSTGRES_DB=envoy_headref api poetry run poe migration
 **d. Wide drift or the user wants a clean slate.** Offer, never run unasked: `docker compose down`, then `rm -rf dockerdata/postgres-data` (Postgres data is a gitignored bind mount there; `docker compose down -v` only removes the datadog and logs volumes and leaves every database in place), then `docker compose up -d` recreates the DB from scratch (the api entrypoint migrates on startup, about a minute). It also wipes `envoy_checkpoint` and all local data, so say that in the offer.
 
 Finish by re-running the stamp/head check and printing before → after.
+
+## 4. Leave the stack up to date and running
+
+Always, as the last step of phase 2, whatever else ran: follow `local-stack.md` in this folder (start the stack if it is down, restart what a moved checkout or lockfile needs, wait for the api to answer, and move the stamp past a migration the database already holds when every object it creates is there). Print its report line in the final report.
 
 ## Report shape
 
@@ -79,6 +83,8 @@ Databases
 Migrations
   stamp 370294b7b171 is not in the chain; head is 20260903_unusable_pw_hash_backfill
   5. stamp back to <parent> and upgrade (case b)
+Local stack
+  <the local-stack.md report line, after phase 2>
 Not checked: <...>
 Running now (safe): 1, 2, 3, 4, 5
 Needs you: <numbers, asked next; or "nothing">

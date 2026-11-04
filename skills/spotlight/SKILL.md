@@ -1,15 +1,15 @@
 ---
 name: spotlight
-description: Put the main checkouts on one ticket's PR stack and remove the worktrees in two phases - report first, then act on its own when every worktree it would remove is verified clean and pushed, and ask only when something is not. Use for "/spotlight ENG-1234", "spotlight this ticket", "delete all worktrees and check out the stack", or "put the main branches on top of a ticket/PR".
+description: Put the main checkouts on one ticket's PR stack and remove the worktrees in two phases - report first, then act on its own when every worktree it would remove is verified clean and pushed, and ask only when something is not. It always finishes with the local docker stack running, migrated to the switched-to checkout, and the api answering. Use for "/spotlight ENG-1234", "spotlight this ticket", "delete all worktrees and check out the stack", or "put the main branches on top of a ticket/PR".
 ---
 
 Target: `$ARGUMENTS`. A Linear key (`ENG-1234`) or Linear URL; a GitHub PR URL or number also works when its title, branch or body names the ticket. Nothing means the ticket this conversation is about (`Shared skill arguments` in `~/.agents/AGENTS.md`); only when there is none, ask which ticket with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options) and stop.
 
 Scope: the main checkouts at `~/dev/envoyai-backend`, `~/dev/envoyai-web`, `~/dev/envoyai-chrome-plugin` and `~/dev/envoyai-chat-ui`. Include `~/dev/ci-workflows` only when the ticket's PRs or stack touch it. Resolve these to absolute paths once; every git command uses `git -C <absolute-repo-or-worktree>`, every worktree path is absolute, and parallel shell calls never use a bare `cd`.
 
-Flow: this puts work `/pickup` already opened in front of you in the main checkouts. It can remove every linked worktree, including other tickets' work, but only after showing what each holds, and on its own only when every one is verified clean and pushed. `/cleanup` owns leftover-directory and database cleanup, with one exception here: a local dev database that is only behind the backend checkout's new migrations, which this skill brings forward (a switch is what leaves it behind, and the api then refuses to boot). Everything messier is `/cleanup migrations`. `/fix` owns keeping the PRs green; this skill does not.
+Flow: this puts work `/pickup` already opened in front of you in the main checkouts. It can remove every linked worktree, including other tickets' work, but only after showing what each holds, and on its own only when every one is verified clean and pushed. `/cleanup` owns leftover-directory and database cleanup; this skill only leaves the local docker stack up to date and running after the switch, through `~/.agents/skills/cleanup/local-stack.md` (a switch is what leaves the database behind, and the api then refuses to boot). Anything that procedure leaves to the user is `/cleanup migrations`. `/fix` owns keeping the PRs green; this skill does not.
 
-Two phases. **Phase 1 always runs first**: read the stack and local state, changing nothing except `git -C <repo> fetch --prune origin` and the requested `git -C <repo> worktree prune` metadata cleanup. Read-only reads of the local docker database are allowed. No pull, checkout, worktree removal, migration or file edit. Print the report. **When every linked worktree is verified clean and pushed, phase 2 runs straight away with no question**: remove all of them (or only this ticket's, when the request said `only` or to keep other tickets' work), move the main checkouts, and bring the local database forward when its stamp is in the target's chain. Otherwise ask ONE approval question with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options), and **phase 2 runs only what that answer approves**. A request to "delete all worktrees" still gets the inventory first. Say what you did not check.
+Two phases. **Phase 1 always runs first**: read the stack and local state, changing nothing except `git -C <repo> fetch --prune origin` and the requested `git -C <repo> worktree prune` metadata cleanup. Read-only reads of the local docker database are allowed. No pull, checkout, worktree removal, migration or file edit. Print the report. **When every linked worktree is verified clean and pushed, phase 2 runs straight away with no question**: remove all of them (or only this ticket's, when the request said `only` or to keep other tickets' work), move the main checkouts, and leave the local stack up to date and running. Otherwise ask ONE approval question with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options), and **phase 2 runs only what that answer approves**. A request to "delete all worktrees" still gets the inventory first. Say what you did not check.
 
 # Phase 1: inspect
 
@@ -76,7 +76,7 @@ Not checked: <unread repos, dependencies, other omissions>
 
 Then, only when some worktree is dirty, unpushed, has no upstream, or is unreadable, ONE `AskUserQuestion` call. Its first question, single-select: **remove all worktrees**, **only this ticket's**, or **stop**. Each removal option also means move the main checkouts to the reported targets where safe; say that in its description. Put the recommended option first and mark it `(Recommended)`: "remove all worktrees" only when ALL are verified clean and pushed; otherwise recommend "only this ticket's" if that removes a verified-clean, pushed set, or "stop" if no such set exists. Always call out that "all" includes other tickets' work.
 
-When the local database's stamp was read and is in the target's chain, the same call carries a second question: **bring the local database up to the target's migrations if it is behind** (Recommended: forward only, inside the api container, then the api restarts on its own) or **leave it**. Its options say that "leave it" can leave the api refusing to boot. No second question when the stamp is not in the target's chain, unreadable, or the stack is down; say `/cleanup migrations` in the report instead.
+The local stack is never a question: phase 2 always ends with `local-stack.md`, whichever removal option was picked.
 
 Neither broad option approves deleting a tree with uncommitted or unpushed work, no upstream, or unreadable state. Those stay unless the free-text answer explicitly names each path or uniquely identified branch after seeing its warning. Unknown state must become readable before any removal. Free text can also choose an ambiguous target or explicitly request a branch deletion. Keep local branches by default. Wait for the answer; do not run phase 2 while the question is pending. An explicit phase-1-only dry run ends with the proposed question recorded in its report, without presenting a destructive approval or running phase 2.
 
@@ -100,18 +100,11 @@ Re-read the main checkout's HEAD and tracked status immediately before switching
 
 Run the pull only after a successful switch. If a local feature branch has no upstream, report and refuse rather than guessing or changing configuration. If a pull refuses to fast-forward, read `git -C <repo> rev-list --left-right --count HEAD...origin/<target>` and report how many commits are local-only and remote-only, plus where the checkout actually stopped. An ahead-only local target also cannot land on the fetched remote by fast-forward; refuse it. Never force or repair divergence. A pull can fetch a newer remote tip than the preview; show the actual final SHA.
 
-## 3. Report what needs installing or migrating
+## 3. Dependencies and the local stack
 
-Compare the old and actual final SHA, not just branch names. On web and chrome-plugin, `git -C <repo> diff --name-only <old-sha> <new-sha> -- package-lock.json`: if changed, say `npm ci` is needed; do not run it. On backend, the same check for `poetry.lock`: say it changed, never run `poetry install`.
+Compare the old and actual final SHA, not just branch names. On web and chrome-plugin, `git -C <repo> diff --name-only <old-sha> <new-sha> -- package-lock.json`: if changed, say `npm ci` is needed; do not run it. On backend, the same check for `poetry.lock`: the local stack step restarts the services so their startup installs it inside the containers; never run `poetry install` on the host.
 
-Then the backend's local database, from the docker stack only (same reads as phase 1; never a configured connection, which is production or staging). Run this whether or not the backend's SHA moved: the database can already be behind, as an api refusing to boot in phase 1 shows. With `B=<absolute backend path>` and the stamp re-read now:
-
-- `docker compose -f $B/docker-compose.yaml exec -T api alembic heads`. Two heads is a branch problem, not a local one: refuse, name `python scripts/check_single_migration_head.py`, change nothing.
-- `docker compose -f $B/docker-compose.yaml exec -T api alembic history -r <stamp>:heads`. It lists the revisions the database lacks; empty means current; an error means the stamp is not in this chain.
-- **Behind, stamp in the chain, and either no question was needed or the answer approved the upgrade:** `docker compose -f $B/docker-compose.yaml exec -T api poetry run poe migration-upgrade` (never from the host: it cannot resolve the `postgres` hostname). Then re-read the stamp, and confirm the api answers: `curl -s -o /dev/null -w '%{http_code}' --max-time 5 localhost:8000/api/openapi.json` returns 200 within about two minutes and `docker compose -f $B/docker-compose.yaml ps api` reads healthy. The api's code reload never re-runs migrations, which is why a switch leaves it refusing to boot. If the old branch lacks revisions the upgrade applied, say that switching back to it will leave the database ahead of that code.
-- **Behind and not approved, not in the chain, ahead of the code, a fork, or the stack down:** change nothing, report what you read, and name `/cleanup migrations`.
-
-Never stamp, downgrade, wipe, `docker compose down -v`, start a stack that is not running, or run `az`. A failed upgrade is reported with its error and left for `/cleanup migrations`; never repair it here.
+Then follow `~/.agents/skills/cleanup/local-stack.md` with the backend's old and actual final SHA, whether or not it moved (the database can already be behind, as an api refusing to boot in phase 1 shows): it starts the stack if it is down, restarts what the switch needs, waits for the api to answer, and moves the stamp past a migration the database already holds only when every object it creates is there. If the old branch lacks revisions the startup applied, say that switching back to it will leave the database ahead of that code. Never downgrade, wipe, `docker compose down -v`, or run `az`; whatever that procedure leaves to the user is reported and named `/cleanup migrations`.
 
 ## 4. Final report
 
@@ -121,9 +114,9 @@ Answer first: `<KEY> — removed <n> worktrees; moved <n> main checkouts; <n> re
 <repo>: <old branch>@<sha> → <new branch>@<sha>; <lockfile notice or refusal>
 Removed: <absolute worktree paths>
 Branches deleted: <names, or none; kept by default>
-Local database: <stamp before> → <stamp after> (upgraded | current | left: <why>); api <healthy | refusing to boot | not running>
+<the local-stack.md report line>
 Refused / kept: <paths or repos and reasons>
 Not checked: <dependencies, unavailable reads>
 ```
 
-Stop there. Never touch Linear, push, merge, create or edit PRs, repair failing checks, or clean up databases beyond the forward upgrade. This skill changes local checkouts, the removed worktrees, and the local database's forward migrations only.
+Stop there. Never touch Linear, push, merge, create or edit PRs, repair failing checks, or clean up databases beyond what `local-stack.md` does. This skill changes local checkouts, the removed worktrees, and the local docker stack through `local-stack.md` only.
