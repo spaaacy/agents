@@ -5,7 +5,7 @@ description: Explain what a pull request (or every open PR for a Linear ticket) 
 
 Target: $ARGUMENTS. A PR number or URL is that PR; a Linear key (`ENG-1234`) or URL means every open PR for that ticket across the repos. A bare number is looked up in the current repo first, then `envoyai-web`, `envoyai-chrome-plugin`, `envoyai-chat-ui` (backend PRs are in the 2000s, the others are lower; never guess across repos, ask if two match). Nothing means the open PR for the current branch; if there is none, ask which PR with the client's structured question tool and stop.
 
-Flow: standalone and read-only. It changes nothing in the code, on GitHub, in Linear or in Slack. `/digest` is the plain-English rewrite of a review; this is the plain-English account of what a change delivers. Posting the result anywhere is a separate ask, and anything posted is plain professional English whatever the chat voice.
+Flow: standalone and read-only. It changes nothing in the code, on GitHub, in Linear or in Slack. This is the plain-English account of what a change delivers. Posting the result anywhere is a separate ask, and anything posted is plain professional English whatever the chat voice.
 
 ## Read
 

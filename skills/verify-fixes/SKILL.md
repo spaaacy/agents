@@ -1,13 +1,15 @@
 ---
 name: verify-fixes
-description: Fresh-eyes check that the fixes made after a PR review actually fix the findings. Run it in a new conversation after /address-review or any fix round. It re-reads the review threads, finds the fix commits, checks every finding against the code as it is now, runs the tests, and reports what is fixed, what is not, and what the fixes changed that nobody asked for. Read-only on the code. It then drafts a reply for every finding - closing out the ones the fixes really fixed, contesting the ones they did not - plus a PR review that either closes the review or explains what remains open, and sends nothing until the user says post. Use when the user asks to verify, check, double-check, or re-review the fixes for review comments.
+description: Fresh-eyes check that the fixes made after a PR review actually fix the findings. Run it in a new conversation after /address-review or any fix round. It re-reads the review threads, finds the fix commits, checks every finding against the code as it is now, runs the tests, and reports what is fixed, what is not, and what the fixes changed that nobody asked for. Read-only on the code. It then drafts a reply for every finding - closing out the ones the fixes really fixed, contesting the ones they did not - plus a PR review that either closes the review or explains what remains open, and sends nothing until the user says post. From round 3 on it runs as the closing pass, so the review loop ends: anything new is raised only when it would break production on a normal path, and settled points stay settled. Use when the user asks to verify, check, double-check, or re-review the fixes for review comments, or to close, wrap up, or finish a review, or says the review is going in circles.
 ---
 
-Target: $ARGUMENTS. A PR number or URL is the PR; `since <sha>` names the last commit the reviewers saw, so everything after it is a fix; pasted text (an /address-review report, a list of commits) is the claim under test. Nothing means the open PR for the current branch (`gh pr view --json number`); if there is none, say so and stop. The repo is the one in the current directory.
+Target: $ARGUMENTS. A PR number or URL is the PR; `since <sha>` names the last commit the reviewers saw, so everything after it is a fix; pasted text (an /address-review report, a list of commits) is the claim under test; a trailing `close` (or the user saying to close or wrap up the review, or that it is going in circles) makes this the closing pass whatever the round. Nothing means the open PR for the current branch (`gh pr view --json number`); if there is none, say so and stop. The repo is the one in the current directory.
 
 This is the second pair of eyes on a fix round, meant to run in a fresh conversation. Nothing said earlier in this conversation and nothing in a pasted report is evidence: the report is the claim being tested, and the agent that wrote the fixes is the one most likely to believe they work. Evidence is GitHub, git, the code at the fix head, and what you run. Read-only on the code: no edits, no commits, no pushes, no resolved threads, no `git stash`, no reset, no new worktrees. The only thing it ever sends anywhere is the thread replies and the review it drafts at the end, and only after the user says post.
 
-Flow: `/address-review` made the fixes this checks. The verdict routes the next step: `Ready to push` closes the review on GitHub (below); `Back to /address-review` sends the open findings to another fix round, and after that round this skill runs again; from round 3 on, or when the loop is going in circles, `/close-review <pr>` replaces this skill and ends the review. CI is not this skill's: `/watch <pr>` keeps the checks green, and a red `Eval sample` is `/fix-evals <pr>`.
+Flow: `/address-review` made the fixes this checks. The verdict routes the next step: `Ready to push` closes the review on GitHub (below); `Back to /address-review` sends the open findings to another fix round, and after that round this skill runs again; from round 3 on it is the closing pass (section 5), which ends the loop. CI is not this skill's: `/fix <pr>` keeps the checks green and triages a red `Eval sample`.
+
+**First pass or closing pass.** Count the rounds from GitHub: round 1 is the first review; every batch of author commits that followed reviewer comments is another round. The first fix round is round 2, and its check is the full pass (sections 1 to 4). From round 3 on, or when the target asked for it, this is the closing pass: sections 1 to 3 as written, then section 5 in place of section 4. Read any earlier verification or closing summary on the PR before deciding anything: what an earlier closing pass left out on purpose is settled unless the code around it changed since. Every fresh look at a branch finds something, so a loop of fix and verify never ends on its own; the closing pass is what ends it, and finding nothing new there is the expected outcome, not a failure of effort.
 
 ## 1. Gather
 
@@ -48,7 +50,7 @@ Check the finding as the reviewer described it against the code at head, not aga
 
 - Reconstruct the failure the reviewer described (the input, the state, the path) and walk it end to end through the code as it is now: the changed function, its callers, the sibling code that does the same job, the tests. Try to make the original problem happen again, then look for where it moved: a check added at one call site while another still lacks it, a fix on the happy path with the error path unchanged, a fix that assumes a value the caller never sets, a rename that left the old name reachable.
 - Run what can be run: the tests the fix commits added or changed, then the tests for the touched modules, with the repo's runner and markers (backend: `ENVIRONMENT=test poetry run pytest tests/suite/<domain> -m unit`; never a bare `pytest tests/`). A test added by the fix counts as coverage only if it would fail without the fix: read what it asserts against what the fix changed; a test that mocks the fixed function or asserts nothing the finding described is not coverage. A small reproduction script in the scratchpad is fine when the path is cheap to drive.
-- A fix to a prompt, a tool docstring, a tool result, or an agent's state assembly needs an eval scenario in the fix commits, both polarities where relevant, and the adapter update if state assembly changed. Run the scenario when the target is cheap (`poe evals run --scenario <id> --target <t> --trials 6 --max-judge-calls 0 --store-root <scratch>`), the way `/fix-evals` measures: one trial proves nothing, and a scenario the fix touched is checked beside its should-hold siblings; otherwise say it was not run.
+- A fix to a prompt, a tool docstring, a tool result, or an agent's state assembly needs an eval scenario in the fix commits, both polarities where relevant, and the adapter update if state assembly changed. Run the scenario when the target is cheap (`poe evals run --scenario <id> --target <t> --trials 6 --max-judge-calls 0 --store-root <scratch>`), the way the "Measure" section of `~/.agents/skills/fix/evals.md` measures: one trial proves nothing, and a scenario the fix touched is checked beside its should-hold siblings; otherwise say it was not run.
 - A decline (a posted reply or a pasted report line giving a reason for no change) is checked the same way: does the reason survive the code? A product call the user decided holds unless the code contradicts the decision as stated.
 
 Verdicts, exactly one per finding:
@@ -61,7 +63,7 @@ Verdicts, exactly one per finding:
 
 Anything still open carries the review's severity tiers (Blocking / Should fix / Polish), ranked by production blast radius, not by how loud the comment was. If a verdict rests on something inferred rather than run or read, say what it changes to if the inference is wrong.
 
-## 4. What the fixes did besides fixing
+## 4. What the fixes did besides fixing (first pass)
 
 Read the whole diff of the fix commits as `/review` reads a PR, scoped to the fix round:
 
@@ -73,9 +75,22 @@ Read the whole diff of the fix commits as `/review` reads a PR, scoped to the fi
 
 Try to disprove each candidate against the code and drop anything you cannot confirm. Pre-existing issues the fix commits did not touch are out of scope unless a fix made them reachable.
 
+## 5. The closing bar (closing pass)
+
+On the closing pass this replaces section 4. It is never a fresh review. Read the diff of the fix commits, and raise a new finding only when every one of these holds:
+
+1. **In scope.** It is in code the fix commits touched, or a fix made it reachable. The rest of the PR was reviewed already, and pre-existing code was never in scope.
+2. **Blocking, by the /review definition.** Wrong behavior a user, carrier, or customer hits on a normal path; data loss or corruption; a security or tenant-scoping hole; a migration that cannot apply; a check the fix round weakened (a deleted or loosened test, a skip or xfail, a baseline or goldens edit); or an unrequested behavior change the fixes introduced.
+3. **Real input.** It fires on input the system actually produces. An edge case that needs a rare precondition, a malformed input nothing sends, or two failures at once is not raised, whatever its severity would be on paper. It becomes one line under "Seen, not raised" with the precondition named, so the reader can pull it in if they disagree.
+4. **Not already settled.** A thread where a reviewer or the author said no with a reason is settled, and so is a product call the user made and anything an earlier closing pass left out. Re-raising a settled point in different words is exactly the circle this pass exists to break.
+5. **Confirmed against the code**, not the diff: you can name the input, the path, and what breaks, from reading the callers or running it.
+6. **A blocking sentence.** One sentence a human reviewer would use to block the merge with it. If that sentence cannot be written, the finding is not raised.
+
+Everything else (Should fix, Polish, style, footprint, duplication, docs currency, a test that could be tighter, "while you're here") is not raised. Count it in one line by category and say it was left out on purpose. Do not lower the bar because the list came out empty.
+
 ## Report
 
-Open with one line: `#<pr> fix round: <n> fixed · <n> partly · <n> not fixed · <n> unaddressed · <n> declined · <n> new`.
+Open with one line: `#<pr> round <k>: <n> fixed · <n> partly · <n> not fixed · <n> unaddressed · <n> declined · <n> new`, with `, closing pass` after the round on the closing pass.
 
 Per finding:
 
@@ -87,13 +102,15 @@ Per finding:
    Left: <what still needs doing>            (only when something is)
 ```
 
-**Introduced by the fixes** — Blocking / Should fix / Polish, each `path:line` — the issue, its trigger and consequence, the smallest fix, and how it was verified. "None found" is a line.
+**Introduced by the fixes** (first pass) — Blocking / Should fix / Polish, each `path:line` — the issue, its trigger and consequence, the smallest fix, and how it was verified. "None found" is a line.
+
+On the closing pass, two sections take its place. **Raised** — each new finding that cleared the bar: `path:line`, the input, what breaks and for whom, the smallest fix, and the blocking sentence; "None" is a line. **Seen, not raised** — one line per category with its count, then one line per edge case: `edge: <path:line> <what> — needs <precondition>`.
 
 **Tests** — what ran and the result, and which findings the added tests actually cover.
 
 **Not verified** — tests and evals not run, anything inferred rather than checked, and what changes if the inference is wrong.
 
-**Verdict** — one line: `Ready to push` (every finding Fixed, Declined-holds, or Withdrawn, and nothing new above Polish); `Back to /address-review: #<n>, #<m>` (the open findings and the new ones, by number); or `Rethink: <why>` (the fix round changed behavior nobody asked for, or the fix sits in the wrong place).
+**Verdict** — one line: `Ready to push` (every finding Fixed, Declined-holds, or Withdrawn, and nothing new above Polish; on the closing pass, nothing raised); `Back to /address-review: #<n>, #<m>` (the open findings and the new ones, by number); or `Rethink: <why>` (the fix round changed behavior nobody asked for, or the fix sits in the wrong place).
 
 ## Replies and next steps
 
@@ -105,7 +122,7 @@ Every finding ends with a reply on its own thread, because the thread is where t
 
 Then split on the verdict, and be explicit either way: the reader should never have to ask "so what now".
 
-**Nothing left** (`Ready to push`): draft the close-out replies and a closing summary review, even when no new issues were found and every fix already has an author reply. Put `Ready to push` on one line above the draft, then ask the post question below. The summary names the verified head, confirms that the reviewed findings are addressed and no blocking findings remain, briefly states validation and material limits, and explicitly says "Review closed." Do not imply that pending CI passed or unrun tests ran. No new inline findings or next-fix instructions are needed. If equivalent verification replies already exist for this head, link them and still draft the closing summary; only an already-posted equivalent closing summary for the same head removes the need to post it again.
+**Nothing left** (`Ready to push`): draft the close-out replies and a closing summary review, even when no new issues were found and every fix already has an author reply. Put `Ready to push` on one line above the draft, then ask the post question below. The summary names the verified head, confirms that the reviewed findings are addressed and no blocking findings remain, briefly states validation and material limits, and explicitly says "Review closed." On the closing pass it also says in one sentence that this was the closing pass and names in one sentence what was seen and left out on purpose, so the next fresh agent treats it as settled. Do not imply that pending CI passed or unrun tests ran. No new inline findings or next-fix instructions are needed. If equivalent verification replies already exist for this head, link them and still draft the closing summary; only an already-posted equivalent closing summary for the same head removes the need to post it again.
 
 **Something left** (`Back to /address-review` or `Rethink`): the next fix round will be another fresh agent, and /address-review reads findings from the PR's review threads, not from this conversation, so what you found has to be on GitHub before it can be fixed. Lay the steps out in order, then the draft:
 
@@ -113,10 +130,10 @@ Then split on the verdict, and be explicit either way: the reader should never h
 Next
 1. post the replies and review below (say "post")
 2. /address-review <pr> fix in a fresh conversation, for #<n>, #<m> and the new findings
-3. /verify-fixes <pr> again after that round (from round 3 on: /close-review <pr> instead)
+3. /verify-fixes <pr> again after that round (from round 3 on it runs as the closing pass)
 ```
 
-The summary and any new findings ride along, in the shape /post-review uses, in plain professional English whatever the chat voice, short and without restating the diff. The summary is read by the PR author and the reviewers, who may not know this check ran, so it says in one sentence that this was a check of the fix round.
+The summary and any new findings ride along, in the shape /post-review uses, in plain professional English whatever the chat voice, short and without restating the diff. The summary is read by the PR author and the reviewers, who may not know this check ran, so it says in one sentence that this was a check of the fix round. On the closing pass it says instead that this was the closing pass and the listed items are the last ones, and it ends with one sentence naming what was seen and left out on purpose.
 
 - **Summary comment**, 2 to 5 sentences, for every completed verification: on a clean round, use the closing summary above; otherwise state what the fix round got right, what remains open, what the fixes introduced, and what to do first. No headers, no tables.
 - **New findings** above Polish: one inline comment each, prefixed `Blocking:` or `Should fix:`, anchored on a line that is in `gh pr diff <pr>`; a line outside the diff moves to the nearest changed line in that file or into the summary. Polish becomes a one-line `Nit:` only when it has a line and is worth the click; otherwise one summary sentence. Merge findings on the same line.

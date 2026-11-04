@@ -22,23 +22,17 @@ The skills under `skills/` are one lifecycle, and each one names its neighbours 
 /pickup <ticket>        context, then on go: worktree, test-first build, draft PR
   /review <pr>          the author's own pre-PR review (read-only)
     /post-review        posts it as one GitHub review, after "post"
-    /digest             the plain-English rewrite of any review-shaped output
   /impact <pr>          what a PR delivers for carriers, reps and admins, no code (read-only)
-  /rebase <ticket|pr>   brings every open PR level with development, regenerates, pushes
-  /watch <pr>           keeps CI green and the branch rebased; never merges
-    /fix-evals <pr>     a red Eval sample, a red nightly, or a flaky scenario
+  /fix <pr|ticket>      keeps PRs level with development and CI green, triages red evals; never merges
   reviewers comment
   /address-review <pr>  verify the findings, then on go: fix, reply, push
-  /verify-fixes <pr>    fresh-eyes check of that round; routes back or closes
-  /close-review <pr>    round 3+: the closing pass that ends the review
+  /verify-fixes <pr>    fresh-eyes check of that round; routes back, and from round 3 closes the review
   the user merges
-/deploy                 cut releases, staging, production, in two GOs
 /linear-sweep           tickets to the state their code actually reached
 /cleanup                worktrees, local databases, migration drift
-/brainrot               the chat voice toggle (standalone)
 ```
 
-Shared rules every skill follows: a skill that can change something runs in two steps (read and report, then act only on the user's go, and a task request earlier in the conversation is never a go); nothing merges, approves, resolves threads, or runs `az`; work happens in a worktree on the PR branch (`~/dev/.claude/worktrees/<slug>`), never on a main checkout's branch, never with `git stash`; anything posted to GitHub, Linear or Slack is plain professional English whatever the chat voice; standing eval reds are added only with the user's explicit words; and every decision, go, or post is asked through the client's structured question tool (Claude Code: `AskUserQuestion`), one call carrying every open decision with the recommended option first, never a "reply go" line the user has to answer in free text.
+Shared rules every skill follows: a skill that can change something runs in two steps (read and report, then act only on the user's go, and a task request earlier in the conversation is never a go), with one exception: invoking `/fix` is the go to rebase, push mechanical CI fixes and re-run an infrastructure failure once, while its eval fixes still take the two steps; nothing merges, approves, resolves threads, or runs `az`; work happens in a worktree on the PR branch (`~/dev/.claude/worktrees/<slug>`), never on a main checkout's branch, never with `git stash`; anything posted to GitHub, Linear or Slack is plain professional English whatever the chat voice; standing eval reds are added only with the user's explicit words; and every decision, go, or post is asked through the client's structured question tool (Claude Code: `AskUserQuestion`), one call carrying every open decision with the recommended option first, never a "reply go" line the user has to answer in free text.
 
 ## Account connections
 

@@ -7,7 +7,7 @@ Target: the PR number or URL in $ARGUMENTS, else the PR the most recent /review 
 
 Everything drafted here is read by another engineer on GitHub, so it is plain professional English regardless of any chat voice. Short, direct, no jargon, no severity theater, no "I verified by reading X", no restating the diff back to the author.
 
-Flow: `/review` found the findings; this posts them. The PR author's next step is `/address-review <pr>` (verify, then fix on their go), then `/verify-fixes <pr>` in a fresh conversation; say that in the last line after posting. The same one-review posting shape (`gh api .../reviews --input review.json`, `COMMENT` only) is what `/verify-fixes` and `/close-review` use for their summaries, so a reader sees one voice across the whole review.
+Flow: `/review` found the findings; this posts them. The PR author's next step is `/address-review <pr>` (verify, then fix on their go), then `/verify-fixes <pr>` in a fresh conversation; say that in the last line after posting. The same one-review posting shape (`gh api .../reviews --input review.json`, `COMMENT` only) is what `/verify-fixes` uses for its summaries, so a reader sees one voice across the whole review.
 
 ## Step 1: draft, then stop
 

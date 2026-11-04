@@ -5,7 +5,7 @@ description: Move my Linear tickets to the state their code actually reached - M
 
 Scope: my tickets (assignee "me") in the Engineering team whose state is In Review, Merged, or Staging. `$ARGUMENTS` can widen it: `all` sweeps every assignee, a ticket key sweeps just that one, `in-progress` also includes In Progress tickets that already have a merged PR.
 
-Flow: run this after `/deploy` lands (or any time the question is "where is my ticket really?"). It only moves ticket states; it never touches code, PRs or worktrees. `/cleanup` is the next skill, removing the worktrees whose PRs this sweep just found in production.
+Flow: run this after a release lands (or any time the question is "where is my ticket really?"). It only moves ticket states; it never touches code, PRs or worktrees. `/cleanup` is the next skill, removing the worktrees whose PRs this sweep just found in production.
 
 Truth comes from git, not from Linear's PR links. Repos: `envoyai-backend`, `envoyai-web`, `envoyai-chrome-plugin` (flow is development → staging → production, production branch `origin/production`), and `envoyai-chat-ui`, which is a package, not a deployed app: its `production` branch is dead (stuck at v1.0.1 since June) and must never be used. Local clones live under `~/dev/<repo>`. `git fetch origin development staging production` in the three apps and `git fetch origin --tags` in chat-ui before deciding anything.
 
