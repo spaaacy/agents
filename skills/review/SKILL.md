@@ -17,7 +17,7 @@ In this priority order:
 
 1. **Unrequested behavior change.** Build a ledger of every observable behavior the diff changes: defaults, thresholds, conditions, ordering, removed branches, changed return values, changed error handling. For each, mark it INTENDED (traceable to the ticket) or UNREQUESTED. A "cleanup" that changes what a user, carrier, or client sees is unrequested. This ledger is the most important output of the review.
 2. **Intent match.** Does the diff fully deliver the ticket? Name every gap first, then any scope beyond it. Every hunk should trace to the ask.
-3. **Rollout risk.** Migration ordering and fresh-chain safety, deploy atomicity, what happens mid-deploy and on rollback, feature gating, cross-repo deploy order, backfills on existing rows.
+3. **Rollout risk.** Migration ordering and fresh-chain safety, deploy atomicity, what happens mid-deploy and on rollback, feature gating, cross-repo deploy order, backfills on existing rows. A backfill script with no runbook ticket linked in the PR body (`Working style` in `~/.agents/AGENTS.md`) is blocking: nothing else makes anyone run it.
 4. **Human-facing copy.** Any change to spoken or emailed carrier text, UI strings, notifications, escalation cards, error messages. List each changed string and whether the ticket asked for it.
 5. **Agent behavior drift.** Any change to prompts, tool docstrings, tool results, or entrypoint state assembly that shifts what the AI agent says or does. Each needs an eval scenario in the same PR, both polarities where relevant, and an adapter update if state assembly changed.
 6. **Data semantics.** New columns or fields with ambiguous meaning, nullability that changes a read path, soft vs hard delete, audit rows, retention.

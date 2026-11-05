@@ -107,7 +107,7 @@ The smallest change that delivers the ticket. No drive-by refactors, no behaviou
 
 ## Push and open a draft PR
 
-Push the branch and open a **draft** PR against the repo's default branch, titled by the repo's convention with the ticket key, which is what links it to the Linear ticket (the ticket itself is never edited: no state, assignee, title or description change without the user's approval; a comment is fine). The body says: what changed and why, the observable behaviour ledger, what was tested and eval'd, and the cross-repo deploy order when more than one repo is involved. Plain professional English, whatever the chat voice is, plus the session's attribution lines.
+Push the branch and open a **draft** PR against the repo's default branch, titled by the repo's convention with the ticket key, which is what links it to the Linear ticket (the ticket itself is never edited: no state, assignee, title or description change without the user's approval; a comment is fine). The body says: what changed and why, the observable behaviour ledger, what was tested and eval'd, and the cross-repo deploy order when more than one repo is involved. A PR that adds a backfill gets its runbook ticket drafted and asked about in this round (`Working style` in `~/.agents/AGENTS.md`), and the body links it once it exists. Plain professional English, whatever the chat voice is, plus the session's attribution lines.
 
 Never mark it ready for review, never approve, never merge, never enable auto-merge, and never move the Linear ticket's state — those are the user's, always, and a finished PR is not an instruction to merge it.
 
