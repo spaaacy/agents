@@ -11,6 +11,11 @@ import tomllib
 
 REMOVE = object()
 
+# Every skill creates its worktrees here (/pickup, /fix, /address-review).
+# Outside cwd, workspace-write asks before each edit there; .git and the
+# gitdir target stay read-only either way, so commits still ask.
+WORKTREES = str(Path.home() / "dev" / ".claude" / "worktrees")
+
 
 def edit_setting(text: str, key: str, value, *, section: str | None = None) -> str:
     """Replace one assignment, accepting the edit only if all other data matches.
@@ -56,6 +61,29 @@ def edit_setting(text: str, key: str, value, *, section: str | None = None) -> s
     raise ValueError(f"Cannot safely update {section + '.' if section else ''}{key}")
 
 
+def ensure_writable_root(text: str, root: str) -> str:
+    """Add ``root`` to sandbox_workspace_write.writable_roots, keeping any others."""
+    config = tomllib.loads(text)
+    section = config.get("sandbox_workspace_write")
+    if section is not None:
+        roots = section.get("writable_roots", [])
+        if root in roots:
+            return text
+        return edit_setting(text, "writable_roots", [*roots, root], section="sandbox_workspace_write")
+    expected = deepcopy(config)
+    expected["sandbox_workspace_write"] = {"writable_roots": [root]}
+    block = f"[sandbox_workspace_write]\nwritable_roots = {json.dumps([root])}\n\n"
+    # Before the mcp/render.py block, which owns everything up to its END line.
+    marker = text.find("# BEGIN agents-managed")
+    if marker >= 0:
+        candidate = text[:marker] + block + text[marker:]
+    else:
+        candidate = text + ("\n" if text and not text.endswith("\n") else "") + ("\n" if text else "") + block
+    if tomllib.loads(candidate) != expected:
+        raise ValueError("Cannot safely add sandbox_workspace_write.writable_roots")
+    return candidate
+
+
 def merge(text: str) -> str:
     config = tomllib.loads(text)
     fallbacks = config.get("project_doc_fallback_filenames", [])
@@ -66,6 +94,7 @@ def merge(text: str) -> str:
     if "project_doc_max_bytes" not in config:
         text = edit_setting(text, "project_doc_max_bytes", 131072)
     text = edit_setting(text, "skills", REMOVE, section="features")
+    text = ensure_writable_root(text, WORKTREES)
     tomllib.loads(text)
     return text
 

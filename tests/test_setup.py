@@ -26,8 +26,27 @@ class CodexConfigTests(unittest.TestCase):
         self.assertEqual(tomllib.loads(merged), {
             "project_doc_fallback_filenames": ["CLAUDE.md"],
             "project_doc_max_bytes": 131072,
+            "sandbox_workspace_write": {"writable_roots": [config.WORKTREES]},
         })
         self.assertEqual(config.merge(merged), merged)
+
+    def test_worktrees_join_existing_writable_roots(self):
+        original = '[sandbox_workspace_write]\nwritable_roots = ["/tmp/other"]\nnetwork_access = true\n'
+        merged = config.merge(original)
+        self.assertEqual(tomllib.loads(merged)["sandbox_workspace_write"], {
+            "writable_roots": ["/tmp/other", config.WORKTREES],
+            "network_access": True,
+        })
+        self.assertEqual(config.merge(merged), merged)
+
+    def test_writable_roots_go_before_the_managed_mcp_block(self):
+        original = (
+            'model = "x"\n\n# BEGIN agents-managed (mcp/render.py codex --apply)\n'
+            '[mcp_servers.context7]\nurl = "https://example.com"\n# END agents-managed\n'
+        )
+        merged = config.merge(original)
+        self.assertLess(merged.index("[sandbox_workspace_write]"), merged.index("# BEGIN agents-managed"))
+        self.assertEqual(tomllib.loads(merged)["mcp_servers"], {"context7": {"url": "https://example.com"}})
 
     def test_existing_feature_table_and_credentials_preserved(self):
         original = '''# Personal config
@@ -65,10 +84,12 @@ project_doc_fallback_filenames = ["OTHER.md"]
         self.assertEqual(parsed["profiles"]["small"]["project_doc_fallback_filenames"], ["OTHER.md"])
 
     def test_existing_supported_settings_are_unchanged(self):
-        original = '''project_doc_fallback_filenames = ["CLAUDE.md"]
+        original = f'''project_doc_fallback_filenames = ["CLAUDE.md"]
 project_doc_max_bytes = 262144
 [features]
 hooks = true
+[sandbox_workspace_write]
+writable_roots = ["{config.WORKTREES}"]
 '''
         self.assertEqual(config.merge(original), original)
 

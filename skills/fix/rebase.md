@@ -21,7 +21,7 @@ Continue with `GIT_EDITOR=true git rebase --continue` (add `-c core.hooksPath=/d
 ## Check before pushing
 
 - Generated outputs are current: re-run the generator once on the finished tree and confirm `git status` shows nothing.
-- Backend: `poe evals validate` when `evals/` is in the diff, the migration-head check when a migration is, and `ENVIRONMENT=test poetry run pytest -n 8 -m unit -q <the PR's test files and the suites of its touched modules>`, all in one call (`Running checks` in `~/.agents/AGENTS.md`).
+- Backend: `poe evals validate` when `evals/` is in the diff, the migration-head check when a migration is, and `ENVIRONMENT=test poetry run pytest -n 8 -m unit -q <the PR's test files, plus the test files for any file where a conflict was resolved>`, all in one call (`Running checks` in `~/.agents/AGENTS.md`).
 - Frontend: `npx vitest run <the PR's test files>`, and `npx svelte-check --threshold error` filtered to the PR's files (errors in untouched files are the known local Node 25 gaps; CI is the check for those).
 - A failure here that the rebase caused (a test added on `development` that seeds an old type the PR changed, a scope or allow-list the PR's new import now needs) is fixed in its own commit, `fix(tests): … after rebase (<KEY>)`, never folded into the author's commits. A failure that is the PR's own spec change is reported, not fixed.
 

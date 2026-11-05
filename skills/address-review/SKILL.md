@@ -81,7 +81,7 @@ Work the Confirmed and Partly findings, plus the product calls the user said yes
 - Follow the repo's rules for the kind of change: tests for changed behavior, eval scenarios for prompt or agent behavior changes, regenerated generated files, migrations per the repo's workflow. A finding about agent or prompt behaviour (a missing scenario, a reviewer citing an eval red, a prompt rule the reviewer wants changed) is fixed under the "Measure" section of `~/.agents/skills/fix/evals.md`: the scenario first, several trials, the should-hold siblings beside it, and an A/B against the base prompt when a sibling moves; a single green trial is not a fix.
 - Run checks the way `Running checks` in `~/.agents/AGENTS.md` says: every fix's tests in one batched call, `-n 8` on the backend, only the failing ids while iterating, and no local re-run of what CI already passed on the same commit.
 - Never weaken a test, eval, lint rule, baseline, or type check to make a finding go away.
-- Run the tests for the touched modules. A red test is fixed or reported, never skipped.
+- Run the test files that cover the touched code; CI runs the rest after the push. A red test is fixed or reported, never skipped.
 - Commit per finding, or per group of findings that touch the same lines, with the repo's commit convention; the message says what changed, not "address review". Stage specific files only.
 
 Write a short reply for every finding, in plain professional English whatever the chat voice is: fixed findings name the commit and what changed in one sentence; Not an issue and declined product calls give the reason in one or two sentences, without arguing.

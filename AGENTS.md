@@ -74,14 +74,18 @@ Do not use it for refactoring, writing scripts from scratch, debugging business 
 
 ## Running checks
 
-Tests, type checks and lint runs are most of an agent's wall time: the two weeks of sessions to 2026-11-04 spent about 15 hours in pytest, much of it paying the app's import cost again and again. So:
+Waiting on checks is most of an agent's wall time: from 2026-10-28 to 2026-11-05 sessions sat about 17 hours on tests, mypy and commit hooks, a median of 16 pytest calls per session at about 40 seconds each, mostly the app's import cost. CI runs every suite on every push, so a local run is there to show the change works, not to run CI early. So:
 
+- Local tests cover the change, not the suite: the test files for the code you touched, never a whole `tests/suite/<domain>` folder or the full `-m unit` ladder before a PR. Per change that is three runs at most: the new test failing, it passing, and the batch once before pushing.
 - One test command per round. Put every test file the round needs in one call: each separate backend `pytest` call spends 15 to 30 seconds importing the app before it runs a single test.
 - Backend unit and integration runs take `-n 8`, as CI does. `-m db` runs stay serial, as CI runs them.
 - While fixing a failure, re-run only the failing test ids, not the whole batch. Never re-run a command when nothing it covers has changed since its last run.
 - A commit CI already passed is not re-tested locally: read `gh pr checks` and the run's log instead. Run locally only what changed after that commit, or what CI does not run (an agent-loop eval target outside the sample, e2e).
+- One push per batch of fixes: fix every failure you already know about, run the checks once, then push. Each push restarts 7 to 15 minutes of CI and draws a new eval sample, so a push per small fix costs more than it saves.
+- While waiting on CI or a long run, say once what you are waiting on, then write again only when something changed (a check finished, a run failed). A poll that finds nothing new sends no message.
 - A run expected to take more than a minute goes in the background; keep working and read the result when it finishes.
-- Backend mypy: only the changed files, the way CI runs it, `mypy --no-site-packages --follow-imports=silent <files>`. Without `--no-site-packages` the locked mypy crashes inside an installed library (ddtrace, langsmith) after about 70 seconds and checks nothing. A branch without envoyai-backend #3045 still has the crashing pre-commit hook: run mypy by hand with the flag, then commit with `SKIP=mypy`.
+- Backend mypy runs once, through the commit hook, on the staged files, the way CI runs it. Do not run it by hand before committing. Run it by hand only on the files the hook flagged, while fixing them (`mypy --no-site-packages --follow-imports=silent <files>`), then commit with `SKIP=mypy` once they pass. A branch from before envoyai-backend #3045 still has the crashing hook: run mypy by hand with that flag, then commit with `SKIP=mypy`.
+- A backend worktree imports its own code: the shared venv carries the import hook from envoyai-backend #3053, so `tms-ingestion/`, `evalkit/` and `envoy` load from the worktree. Never prefix commands with `PYTHONPATH`. A `ModuleNotFoundError` for a module the branch added means the hook is missing from the venv: run the bootstrap from a branch that has it.
 - Frontends: one `npx vitest run <files>` per round, and `svelte-check` once, before pushing.
 - Test secrets decrypt on their own (the `secrets/test.ejson` key is in `ejson-keys/`, which every worktree links). Never hand-seed `secrets/test.json`.
 
