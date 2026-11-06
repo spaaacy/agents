@@ -1,0 +1,3 @@
+#!/bin/zsh
+# Live view of the Slack Claude bot, in this terminal. Ctrl-C closes the view; the bot keeps running.
+exec "$HOME/.agents/slack-claude/.venv/bin/python" -u "$HOME/.agents/slack-claude/watch.py" "$@"

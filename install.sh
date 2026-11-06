@@ -14,6 +14,9 @@ python3 "$A/claude/apply.py"
 command -v claude >/dev/null && python3 "$A/mcp/render.py" claude --apply
 fi
 
+# Commands (the background tools' live views)
+for cmd in watch-slack-claude watch-pr-reviews; do link "$A/bin/$cmd" "$HOME/.local/bin/$cmd"; done
+
 # Codex (reads ~/.agents/skills natively)
 codex_dir="${CODEX_HOME:-$HOME/.codex}"
 link "$A/AGENTS.md" "$codex_dir/AGENTS.md"

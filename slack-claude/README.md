@@ -24,13 +24,9 @@ Answers are posted where you asked, so everyone in that conversation can read wh
 
 ## Live view
 
-A Terminal window opens at login and shows the bot as it works: whether it is connected, each request, what Claude reads, searches and runs, refused tools, and a link to the answer with the command to open the session on the laptop. Closing the window only closes the view; the bot keeps running. To reopen it, double-click `Watch Slack Claude.command`, or:
+Run `watch-slack-claude` in any terminal to watch the bot work: whether it is connected, each request, what Claude reads, searches and runs, refused tools, and a link to the answer with the command to open the session on the laptop. Ctrl-C closes the view; the bot keeps running. Nothing opens on its own. `watch-slack-claude --once` prints the current status and exits.
 
-```sh
-open -a Terminal ~/.agents/slack-claude/Watch\ Slack\ Claude.command
-```
-
-It reads `state/status.json` (a heartbeat the bot writes every 10 seconds) and `state/requests/<id>/` (`request.json` with each request's state, `events.jsonl` with Claude's events as they stream). Thinking and raw tool output are not shown; they are in `events.jsonl`. Its login item is `~/Library/LaunchAgents/ai.envoy.slack-claude-viewer.plist`, which opens the window once per login.
+It reads `state/status.json` (a heartbeat the bot writes every 10 seconds) and `state/requests/<id>/` (`request.json` with each request's state, `events.jsonl` with Claude's events as they stream). Thinking and raw tool output are not shown; they are in `events.jsonl`. The command lives in `~/.agents/bin/` and `install.sh` links it into `~/.local/bin`.
 
 ## Setup
 
@@ -50,8 +46,6 @@ Done once. Everything here stays on this Mac except the Slack app itself.
    ```sh
    cp ai.envoy.slack-claude.plist ~/Library/LaunchAgents/
    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.envoy.slack-claude.plist
-   cp ai.envoy.slack-claude-viewer.plist ~/Library/LaunchAgents/
-   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.envoy.slack-claude-viewer.plist
    ```
 6. Invite it to each channel you want to use it in: `/invite @claude-aakif`.
 7. Answers in DMs with teammates. An app created from an earlier manifest needs the current one first: on the app's App Manifest page, paste `slack-app-manifest.json` over it and save, then on Install App click Reinstall to Workspace. Copy the User OAuth Token (`xoxp-...`) from that page, store it, and restart the bot:
@@ -59,7 +53,7 @@ Done once. Everything here stays on this Mac except the Slack app itself.
    security add-generic-password -a "$USER" -s slack-claude-user-token -w
    launchctl kickstart -k gui/$(id -u)/ai.envoy.slack-claude
    ```
-   `bot.py check` then reports the user token as yours, and the live view says "answers in other DMs on".
+   `bot.py check` then reports the user token as yours, and `watch-slack-claude` says "answers in other DMs on".
 
 The Python environment is `.venv` (Python 3.12, `slack_sdk` only). Recreate it with `/Users/aakifmohamed/.pyenv/versions/3.12.8/bin/python3 -m venv .venv && .venv/bin/pip install slack_sdk`. Replace a stored token by adding `-U` to its `security add-generic-password` command.
 
@@ -69,7 +63,7 @@ The Python environment is `.venv` (Python 3.12, `slack_sdk` only). Recreate it w
 cd ~/.agents/slack-claude
 .venv/bin/python bot.py check                          # tokens, Slack sign-in, claude CLI, MCP servers
 .venv/bin/python bot.py ask "what changed in #3053?"   # one question with the bot's limits, printed here
-.venv/bin/python watch.py --once                       # the bot's status, once
+watch-slack-claude                                     # live view in this terminal (--once: status, once)
 .venv/bin/python -m unittest -v test_bot.py            # tests
 tail -f state/bot.log
 launchctl kickstart -k gui/$(id -u)/ai.envoy.slack-claude                              # restart, e.g. after a code change

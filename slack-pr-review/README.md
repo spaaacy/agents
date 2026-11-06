@@ -18,15 +18,9 @@ The queue records each message and PR, and each PR commit is reviewed once. A hi
 
 ## Live terminal view
 
-At login, `ai.envoy.slack-pr-review-viewer` opens Terminal with a live view of the worker. It shows Slack scan health, queued requests, Codex progress messages and commands, findings, and posted-review links. It reads the existing state and event files; opening it never starts another review or posts anything. Raw tool output remains in the saved event logs.
+Run `watch-pr-reviews` in any terminal for a live view of the worker: Slack scan health, queued requests, Codex progress messages and commands, findings, and posted-review links. It reads the existing state and event files; running it never starts another review or posts anything. Raw tool output remains in the saved event logs. Nothing opens on its own at login; the worker itself still starts at login.
 
-Closing the window or pressing Ctrl-C closes only the view. The background worker continues. To reopen it, double-click `Watch Reviews.command`, or run:
-
-```sh
-open -a Terminal ~/.agents/slack-pr-review/Watch\ Reviews.command
-```
-
-The viewer code is `watch.py`. Its separate login entry is `~/Library/LaunchAgents/ai.envoy.slack-pr-review-viewer.plist`; it runs once at login and does not reopen the window after you close it. The worker's own login entry and posting permissions are unchanged. A saved conversation can also be resumed with `codex resume <session-id>`; the viewer prints that command for completed runs. This is a live output view, not an interactive Codex conversation.
+Ctrl-C closes only the view; the background worker continues. `watch-pr-reviews --once` prints the current status and exits. The viewer code is `watch.py`; the command lives in `~/.agents/bin/` and `install.sh` links it into `~/.local/bin`. A saved conversation can also be resumed with `codex resume <session-id>`; the viewer prints that command for completed runs. This is a live output view, not an interactive Codex conversation.
 
 ## Worker commands
 
