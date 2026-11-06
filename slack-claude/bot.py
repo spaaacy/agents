@@ -155,8 +155,9 @@ def mention_from_event(
         return Mention(channel, ts, thread_ts, text)
     if kind != "message" or channel_type not in ("im", "mpim"):
         return None
-    # The bot's own DM. Before the user token is set up, every DM event is one.
-    if channel_type == "im" and (channel == bot_dm or (bot_dm is None and not dm_as_user)):
+    # The bot's own DM. Unknown (no im:write yet), no DM is treated as it: once the
+    # owner's user events flow, a DM with a teammate would be answered as the bot.
+    if channel_type == "im" and bot_dm is not None and channel == bot_dm:
         return Mention(channel, ts, thread_ts, text)
     # Any other DM or group DM reaches the bot only through the owner's user token.
     # A real mention in a group DM is left to app_mention: the bot may be in that one.

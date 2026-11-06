@@ -101,10 +101,11 @@ class RoutingTests(unittest.TestCase):
         event = {"type": "message", "channel_type": "im", "user": OWNER, "channel": "D2", "ts": "7.0", "text": "@claude hi"}
         self.assertIsNone(route(event, dm_as_user=False))
 
-    def test_before_the_owner_token_exists_every_dm_event_is_the_bots_own(self):
-        # Without user events subscribed, the only DM events are the bot's.
-        event = {"type": "message", "channel_type": "im", "user": OWNER, "channel": "D9", "ts": "7.0", "text": "hey"}
-        self.assertFalse(route(event, bot_dm=None, dm_as_user=False).as_user)
+    def test_with_the_bots_dm_unknown_no_dm_is_answered_as_the_bot(self):
+        # 2026-11-06: the app was reinstalled under a running bot that had no im:write;
+        # a DM with a teammate was taken for the bot's own and the reply failed.
+        event = {"type": "message", "channel_type": "im", "user": OWNER, "channel": "D9", "ts": "7.0", "text": "<@UBOT>"}
+        self.assertIsNone(route(event, bot_dm=None, dm_as_user=False))
 
     def test_a_real_mention_in_a_group_dm_is_left_to_the_bot(self):
         event = {"type": "message", "channel_type": "mpim", "user": OWNER, "channel": "G1", "ts": "7.0", "text": "<@UBOT> hi"}
