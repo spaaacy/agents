@@ -15,6 +15,7 @@ REMOVE = object()
 # Outside cwd, workspace-write asks before each edit there; .git and the
 # gitdir target stay read-only either way, so commits still ask.
 WORKTREES = str(Path.home() / "dev" / ".claude" / "worktrees")
+SANDBOX = "sandbox_workspace_write"
 
 
 def edit_setting(text: str, key: str, value, *, section: str | None = None) -> str:
@@ -64,15 +65,17 @@ def edit_setting(text: str, key: str, value, *, section: str | None = None) -> s
 def ensure_writable_root(text: str, root: str) -> str:
     """Add ``root`` to sandbox_workspace_write.writable_roots, keeping any others."""
     config = tomllib.loads(text)
-    section = config.get("sandbox_workspace_write")
+    section = config.get(SANDBOX)
     if section is not None:
         roots = section.get("writable_roots", [])
         if root in roots:
             return text
-        return edit_setting(text, "writable_roots", [*roots, root], section="sandbox_workspace_write")
+        if "writable_roots" in section:
+            return edit_setting(text, "writable_roots", [*roots, root], section=SANDBOX)
+        return add_to_section(text, "writable_roots", [root])
     expected = deepcopy(config)
-    expected["sandbox_workspace_write"] = {"writable_roots": [root]}
-    block = f"[sandbox_workspace_write]\nwritable_roots = {json.dumps([root])}\n\n"
+    expected[SANDBOX] = {"writable_roots": [root]}
+    block = f"[{SANDBOX}]\nwritable_roots = {json.dumps([root])}\n\n"
     # Before the mcp/render.py block, which owns everything up to its END line.
     marker = text.find("# BEGIN agents-managed")
     if marker >= 0:
@@ -82,6 +85,33 @@ def ensure_writable_root(text: str, root: str) -> str:
     if tomllib.loads(candidate) != expected:
         raise ValueError("Cannot safely add sandbox_workspace_write.writable_roots")
     return candidate
+
+
+def add_to_section(text: str, key: str, value) -> str:
+    """Add a key the sandbox section does not have yet, right under its header."""
+    expected = deepcopy(tomllib.loads(text))
+    expected[SANDBOX][key] = value
+    header = re.search(rf"(?m)^[ \t]*\[{SANDBOX}\][ \t]*(#.*)?\n", text)
+    if header is None:
+        raise ValueError(f"Cannot safely add {SANDBOX}.{key}")
+    candidate = text[:header.end()] + f"{key} = {json.dumps(value)}\n" + text[header.end():]
+    if tomllib.loads(candidate) != expected:
+        raise ValueError(f"Cannot safely add {SANDBOX}.{key}")
+    return candidate
+
+
+def ensure_network_access(text: str) -> str:
+    """Let sandboxed commands reach the network (gh, git push and fetch, evals, npm) without asking.
+
+    Aakif's call, 2026-11-06: about 450 of 1,138 asks in one Codex session were
+    network commands. Writes outside the writable roots and git commits still ask.
+    """
+    section = tomllib.loads(text)[SANDBOX]
+    if section.get("network_access") is True:
+        return text
+    if "network_access" in section:
+        return edit_setting(text, "network_access", True, section=SANDBOX)
+    return add_to_section(text, "network_access", True)
 
 
 def merge(text: str) -> str:
@@ -95,6 +125,7 @@ def merge(text: str) -> str:
         text = edit_setting(text, "project_doc_max_bytes", 131072)
     text = edit_setting(text, "skills", REMOVE, section="features")
     text = ensure_writable_root(text, WORKTREES)
+    text = ensure_network_access(text)
     tomllib.loads(text)
     return text
 

@@ -26,9 +26,21 @@ class CodexConfigTests(unittest.TestCase):
         self.assertEqual(tomllib.loads(merged), {
             "project_doc_fallback_filenames": ["CLAUDE.md"],
             "project_doc_max_bytes": 131072,
-            "sandbox_workspace_write": {"writable_roots": [config.WORKTREES]},
+            "sandbox_workspace_write": {"writable_roots": [config.WORKTREES], "network_access": True},
         })
         self.assertEqual(config.merge(merged), merged)
+
+    def test_network_access_turned_on_in_an_existing_section(self):
+        for original in (
+            f'[sandbox_workspace_write]\nwritable_roots = ["{config.WORKTREES}"]\nnetwork_access = false\n',
+            f'[sandbox_workspace_write] # sandbox\nwritable_roots = ["{config.WORKTREES}"]\n[features]\nhooks = true\n',
+            '[sandbox_workspace_write]\nexclude_slash_tmp = false\n',
+        ):
+            merged = config.merge(original)
+            parsed = tomllib.loads(merged)
+            self.assertIs(parsed["sandbox_workspace_write"]["network_access"], True)
+            self.assertIn(config.WORKTREES, parsed["sandbox_workspace_write"]["writable_roots"])
+            self.assertEqual(config.merge(merged), merged)
 
     def test_worktrees_join_existing_writable_roots(self):
         original = '[sandbox_workspace_write]\nwritable_roots = ["/tmp/other"]\nnetwork_access = true\n'
@@ -90,6 +102,7 @@ project_doc_max_bytes = 262144
 hooks = true
 [sandbox_workspace_write]
 writable_roots = ["{config.WORKTREES}"]
+network_access = true
 '''
         self.assertEqual(config.merge(original), original)
 
