@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "deny": [
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      "WebFetch",
+      "WebSearch",
+      "Bash(git push *)",
+      "Bash(git commit *)",
+      "Bash(git reset *)",
+      "Bash(git checkout *)",
+      "Bash(git switch *)",
+      "Bash(git stash *)",
+      "Bash(git -C * push *)",
+      "Bash(git -C * commit *)",
+      "Bash(git -C * reset *)",
+      "Bash(git -C * checkout *)",
+      "Bash(git -C * switch *)",
+      "Bash(git -C * stash *)",
+      "Bash(gh api *)",
+      "Bash(gh pr create *)",
+      "Bash(gh pr merge *)",
+      "Bash(gh pr comment *)",
+      "Bash(gh pr review *)",
+      "Bash(az *)",
+      "mcp__claude_ai_Slack",
+      "mcp__claude_ai_Claude_Docs",
+      "mcp__agent-bus"
+    ]
+  },
+  "enabledPlugins": {
+    "datadog@claude-plugins-official": true
+  }
+}

@@ -3,3 +3,5 @@ mcp/secrets.env
 __pycache__/
 skills/synced/
 slack-pr-review/state/
+slack-claude/state/
+slack-claude/.venv/
