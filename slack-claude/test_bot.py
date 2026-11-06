@@ -164,7 +164,7 @@ class PromptTests(unittest.TestCase):
 
     def test_a_bare_mention_asks_from_the_conversation(self):
         mention = bot.Mention("C1", "4.0", "1.0", "<@UBOT>")
-        self.assertIn("(no text: answer from the conversation above)", bot.build_prompt(mention, self.thread, BOT, names, resumed=False))
+        self.assertIn("(he only mentioned you: answer the open question above", bot.build_prompt(mention, self.thread, BOT, names, resumed=False))
 
 
 class ReplyTests(unittest.TestCase):
@@ -203,6 +203,22 @@ class CommandTests(unittest.TestCase):
     def test_shipped_allow_list_has_no_write_tools(self):
         for tool in bot.load_config()["allowed_tools"]:
             self.assertNotRegex(tool, r"^(Edit|Write|NotebookEdit)$|save_|create_|delete_|push|commit|send")
+
+    def test_the_voice_rules_come_live_from_agents_md(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "AGENTS.md"
+            path.write_text("# A\n\n## Communication style\n\nshort.\n\n## Voice\n\nlowercase.\n\n## Tools\n\nx\n")
+            rules = bot.voice_rules(path)
+            self.assertIn("Communication style:\nshort.", rules)
+            self.assertIn("Voice:\nlowercase.", rules)
+            self.assertNotIn("Tools", rules)
+            self.assertEqual(bot.voice_rules(Path(tmp) / "missing.md"), "")
+
+    def test_the_prompt_carries_the_voice_rules(self):
+        prompt = bot.claude_command(CFG, None, None)
+        appended = prompt[prompt.index("--append-system-prompt") + 1]
+        self.assertTrue(appended.startswith(bot.SYSTEM_PROMPT))
+        self.assertIn("Voice:\n", appended)
 
     def test_mcp_servers_come_from_the_users_claude_config(self):
         with tempfile.TemporaryDirectory() as tmp:
