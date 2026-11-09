@@ -1,0 +1,16 @@
+# Link local chat-ui into web and the extension
+
+Web and the extension import `@envoyai/chat-ui` from `node_modules`, and they read its built `dist/`, never its source. Unless chat-ui is built and linked, a chat-ui change sitting in `~/dev/envoyai-chat-ui` is invisible to both, and a page importing a new export fails in the browser (`does not provide an export named …`; in web, one page shows "500 Internal Error" while everything else works).
+
+Run this whenever chat-ui's main checkout moved, or the stack has a chat-ui PR, and again after any commit made in the spotlighted chat-ui checkout. Never run `npm run build`, `npm run dev`, `npm ci` or `npm install` in web or the extension: the link is the whole job, and an install there replaces the link with the published package.
+
+Paths: `C=~/dev/envoyai-chat-ui`, `W=~/dev/envoyai-web`, `X=~/dev/envoyai-chrome-plugin`, resolved to absolute paths. Skip a consumer whose `node_modules` does not exist and say so.
+
+1. **Build chat-ui.** When `$C/package-lock.json` changed between the old and new SHA, or `$C/node_modules` is missing, run `npm ci` in `$C` first. Then `npm --prefix $C run build` (svelte-package writes `$C/dist`). A failed build stops here: report it and leave both consumers untouched.
+2. **Web: a symlink to the repo root.** `$W/node_modules/@envoyai/chat-ui` must be a symlink to `$C`. Web's vite config excludes chat-ui from dependency optimization and SvelteKit dedupes svelte, so the repo root works. If it is already that symlink, leave it. If it is a directory (a published copy from an install), remove that one directory and create the link: `rm -rf $W/node_modules/@envoyai/chat-ui && ln -s $C $W/node_modules/@envoyai/chat-ui`. Then clear the dev cache: `rm -rf $W/node_modules/.vite`.
+3. **Extension: a copy of the build, never a symlink.** A symlink to the repo root makes the extension's bundler load chat-ui's own copy of svelte, and type checks and builds then fail. If `$X/node_modules/@envoyai/chat-ui` is a symlink, remove the symlink and create the directory. Then copy only what was published: `cp $C/package.json $C/README.md $X/node_modules/@envoyai/chat-ui/` and `rsync -a --delete $C/dist/ $X/node_modules/@envoyai/chat-ui/dist/`. Clear its cache: `rm -rf $X/node_modules/.vite`.
+4. **Check.** `readlink $W/node_modules/@envoyai/chat-ui` prints `$C`; `diff -rq $C/dist $X/node_modules/@envoyai/chat-ui/dist` prints nothing; `$C/dist/index.js` is newer than chat-ui's HEAD commit.
+
+Report line: `chat-ui: built <sha>; web linked to the checkout; extension synced` (or what was skipped and why). Add that a running web dev server needs a hard refresh, and a running extension dev build needs the extension reloaded, to show the change; restarting `npm run dev` is only needed if the old code still shows.
+
+Only these paths are ever removed: `$W/node_modules/@envoyai/chat-ui`, `$X/node_modules/@envoyai/chat-ui` when it is a symlink, and the two `node_modules/.vite` caches. All of them are rebuilt by an install or the next dev run.

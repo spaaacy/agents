@@ -1,6 +1,6 @@
 ---
 name: spotlight
-description: Put the main checkouts on one ticket's PR stack and remove the worktrees in two phases - report first, then act on its own: it removes only worktrees verified clean and pushed, keeps and lists the rest, and never asks. It always finishes with the local docker stack running, migrated to the switched-to checkout, and the api answering. Use for "/spotlight ENG-1234", "spotlight this ticket", "delete all worktrees and check out the stack", or "put the main branches on top of a ticket/PR".
+description: Put the main checkouts on one ticket's PR stack and remove the worktrees in two phases - report first, then act on its own: it removes only worktrees verified clean and pushed, keeps and lists the rest, and never asks. It always finishes with the local docker stack running, migrated to the switched-to checkout, and the api answering, and, when chat-ui moved or is in the stack, with chat-ui built and linked into web and the extension so its local changes show up. Use for "/spotlight ENG-1234", "spotlight this ticket", "delete all worktrees and check out the stack", or "put the main branches on top of a ticket/PR".
 ---
 
 Target: `$ARGUMENTS`. A Linear key (`ENG-1234`) or Linear URL; a GitHub PR URL or number also works when its title, branch or body names the ticket. Nothing means the ticket this conversation is about (`Shared skill arguments` in `~/.agents/AGENTS.md`); only when there is none, ask which ticket with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options) and stop.
@@ -110,6 +110,8 @@ Compare the old and actual final SHA, not just branch names. On web and chrome-p
 
 Then follow `~/.agents/skills/cleanup/local-stack.md` with the backend's old and actual final SHA, whether or not it moved (the database can already be behind, as an api refusing to boot in phase 1 shows): it starts the stack if it is down, restarts what the switch needs, waits for the api to answer, and moves the stamp past a migration the database already holds only when every object it creates is there. If the old branch lacks revisions the startup applied, say that switching back to it will leave the database ahead of that code. Never downgrade, wipe, `docker compose down -v`, or run `az`; whatever that procedure leaves to the user is reported and named `/cleanup migrations`.
 
+Then, when chat-ui's checkout moved or the stack has a chat-ui PR, follow `chat-ui-link.md` in this folder: it builds chat-ui and points web (a symlink) and the extension (a copy of the build) at it, without building or running either app. When web or the extension also needs `npm ci`, say the link has to be redone after it (rerun `/spotlight`).
+
 ## 4. Final report
 
 Answer first: `<KEY> — removed <n> worktrees; moved <n> main checkouts; <n> refused.` Then one line per repo, including refused repos at their actual final position:
@@ -119,8 +121,9 @@ Answer first: `<KEY> — removed <n> worktrees; moved <n> main checkouts; <n> re
 Removed: <absolute worktree paths>
 Branches deleted: <names, or none; kept by default>
 <the local-stack.md report line>
+<the chat-ui-link.md report line, when it ran>
 Refused / kept: <paths or repos and reasons>
 Not checked: <dependencies, unavailable reads>
 ```
 
-Stop there. Never touch Linear, push, merge, create or edit PRs, repair failing checks, or clean up databases beyond what `local-stack.md` does. This skill changes local checkouts, the removed worktrees, and the local docker stack through `local-stack.md` only.
+Stop there. Never touch Linear, push, merge, create or edit PRs, repair failing checks, or clean up databases beyond what `local-stack.md` does. This skill changes local checkouts, the removed worktrees, the local docker stack through `local-stack.md`, and the chat-ui links through `chat-ui-link.md`, nothing else.
