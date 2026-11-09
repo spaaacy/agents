@@ -1,13 +1,13 @@
 ---
 name: review
-description: Pre-PR self-review of a branch or PR. Product regressions and unrequested behavior changes first, then verified engineering findings ranked by blast radius.
+description: Pre-PR self-review of a branch or PR. Product regressions and unrequested behavior changes first, then verified engineering findings ranked by blast radius. Once the report is out, asks whether to post it with /post-review.
 ---
 
 Review $ARGUMENTS. A PR number or PR URL means `gh pr view` + `gh pr diff` (both accept either form); a branch name is diffed against the repo's default branch; nothing means the PR or branch this conversation is about (`Shared skill arguments` in `~/.agents/AGENTS.md`), else the current branch against its base, including uncommitted changes. Read-only: never edit.
 
 This is the author's own review before the PR goes up. The reader wrote the code with AI assistance and is worried about product changes slipping in unnoticed, so be blunt, lead with behavior, and never soften a finding because the author is the reader.
 
-Flow: `/pickup` produced the branch; this is the first look at it. Its output feeds `/post-review` (puts it on the PR as one review, after the user says post). Findings the author fixes on the branch go through the ordinary edit-test loop; a finding about agent behaviour with no scenario is fixed under the "Measure" section of `~/.agents/skills/fix/evals.md`. Once reviewers comment, the author's side is `/address-review`, and `/verify-fixes` checks that round. This skill never fixes anything.
+Flow: `/pickup` produced the branch; this is the first look at it. Its output feeds `/post-review` (puts it on the PR as one review), which this skill offers to run once the report is out. Findings the author fixes on the branch go through the ordinary edit-test loop; a finding about agent behaviour with no scenario is fixed under the "Measure" section of `~/.agents/skills/fix/evals.md`. Once reviewers comment, the author's side is `/address-review`, and `/verify-fixes` checks that round. This skill never fixes anything.
 
 ## 1. Context
 Find the ticket (Linear key in the branch name, commits, or PR body) and write down in one paragraph what was asked. Read the whole diff, then the code around it: callers and callees of every changed symbol, the tests covering them, sibling code that solves a similar problem (the baseline for "how this codebase does it"), and git log on the touched files. Read the rules: the repo's file under `repos/` next to this skill, named after the origin remote's repository (`basename -s .git "$(git remote get-url origin)"`, e.g. `repos/envoyai-backend.md`; this works from a linked worktree too), a `REVIEW.md` at the repo root if one exists, and every `CLAUDE.md` from the root down to the changed paths. No `repos/` file for this remote is fine; do not create one. Check the branch merges cleanly against its base.
@@ -59,4 +59,5 @@ Open with one line: `<n> blocking · <n> should fix · <n> polish`, or "No block
 
 **Merge** — Ready to open / Fix first / Rethink, one sentence why.
 
-**Next** — one line: `/post-review` to put this on the PR, or, when this was the author's own pre-PR pass, what to fix first on the branch.
+## Then ask about posting
+Once the report is out, find the open PR for the target (the PR reviewed, or the open PR for the reviewed branch: `gh pr view <branch> --json number,state`). When there is one, ask with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list with lettered options): "Post this review to #<n> with /post-review?", with two options, Post it and Don't post. Recommend Post it when the review found anything, Don't post when it found nothing. Each option's description says what happens: one GitHub review with a summary and an inline comment per Blocking and Should fix finding, or nothing posted. On Post it, run `/post-review <n>` in this conversation straight away; the answer is its go. On Don't post, stop. With no open PR there is nothing to post to: skip the question and end with one line on what to fix first on the branch.
