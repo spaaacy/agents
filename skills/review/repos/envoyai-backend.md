@@ -21,6 +21,7 @@ Wrong carrier-facing behavior; a prompt or tool change with no eval scenario in 
 - A change to `_handle_carrier_response`, the voice session bootstrap, or tracking `handle_inbound` updates the mirroring adapter in `evals/harness/adapters/`.
 - New enum values ship an `ALTER TYPE ... ADD VALUE IF NOT EXISTS` migration; a value added and used in one migration recreates the type.
 - `scripts/check_single_migration_head.py` passes; a re-parented migration is called out in the PR body.
+- The PR adds at most one migration, and no migration writes rows (`UPDATE`, `INSERT`, `DELETE`, a data fill in `upgrade()`). Rows go in a `scripts/database/` backfill with a runbook ticket linked from the PR body. A second migration or a data write in one is a finding, with the fix: fold the schema into one revision, move the rows to a script.
 - A `/api/v1` schema change regenerates `openapi-v1.json`; internal features stay off v1.
 - Find-then-create upserts take the shared advisory lock key (`envoy/logistics/carrier/upsert_lock.py`, `_load_upsert_lock_keys`) and are backed by a unique index.
 - Services called inside a caller's UnitOfWork flush only; side effects go through the outbox or `on_commit`, never fire-and-forget.
