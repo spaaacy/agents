@@ -72,7 +72,7 @@ Before touching code, put every product call from step 1, and any new one found 
 
 ### Where to work
 
-Never switch or edit the main checkout's branch. Reuse a worktree already on the PR branch (`git worktree list --porcelain`), else create one with `git fetch origin && git worktree add <path> <headRefName>` (on this machine: `~/dev/.claude/worktrees/<branch-slug>`) and follow the repo's worktree setup (backend: `poetry run poe worktree-bootstrap`; never `poetry install` or `docker compose` from a worktree). If the branch has uncommitted changes or is behind its remote, stop and report; never `git stash`, never reset.
+If a main checkout is already on the PR branch (`/spotlight` put it there), work there and make no worktree (`Working style` in `~/.agents/AGENTS.md`). Otherwise never switch or edit a main checkout's branch: reuse a worktree already on the PR branch (`git worktree list --porcelain`), else create one with `git fetch origin && git worktree add <path> <headRefName>` (on this machine: `~/dev/.claude/worktrees/<branch-slug>`) and follow the repo's worktree setup (backend: `poetry run poe worktree-bootstrap`; never `poetry install` or `docker compose` from a worktree). If the branch has uncommitted changes or is behind its remote, stop and report; never `git stash`, never reset.
 
 ### Fix
 

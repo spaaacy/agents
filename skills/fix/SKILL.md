@@ -45,9 +45,9 @@ Say what changed since the last tick in one or two lines. A tick with nothing ne
 
 ## 2. Where to work
 
-Never switch, rebase, or commit on a main checkout's branch, and never `git stash`. Per PR:
+Never switch a main checkout's branch, never rebase or commit on one that is not on the PR's head branch, and never `git stash`. Per PR:
 - A linked worktree already on the head branch (`git worktree list --porcelain`): use it if `git status --porcelain --untracked-files=no` is clean. Dirty means report and skip that PR this tick; never rebase or commit on top of someone's uncommitted work.
-- The main checkout is on the head branch: do not work there (the permission classifier refuses it, and it is the user's working copy). Make a detached worktree at `~/dev/.claude/worktrees/<repo-short>-<branch-slug>` from `origin/<head>`, work there, and push with `HEAD:<head>`. Tell the user their main checkout is now behind the remote and give the one command that resets it (`git -C <repo> reset --hard origin/<head>`), only after checking it has no uncommitted changes; never run it for them.
+- The main checkout is on the head branch (`/spotlight` put it there): work there, with no new worktree (`Working style` in `~/.agents/AGENTS.md`). Rebase, commit and push from it, so the checkout the user tests on stays the PR. Tracked changes mean report and skip that PR this tick, as for a dirty worktree. If the permission system refuses a write there, report it and stop for that PR; do not fall back to a worktree.
 - Otherwise `git fetch origin` and `git worktree add -B <head> ~/dev/.claude/worktrees/<branch-slug> origin/<head>`.
 
 Reuse the worktree `/pickup` or `/address-review` made; never create a second one on the same branch. Setup per repo: a new backend worktree runs `<main checkout venv>/bin/python -m scripts.dev.worktree_bootstrap` once (a plain `poetry run` there finds no `poe` until the bootstrap links the venv; add `--with-db` for an agent-loop eval target), and never `poetry install` or `docker compose` from a worktree. Frontends get `node_modules` as an APFS clone of the main checkout's (`cp -Rc`), not a symlink, because vite refuses files reached through a symlink outside the worktree.

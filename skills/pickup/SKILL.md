@@ -80,7 +80,7 @@ Put every open question from step 1, and any new one found while planning, to th
 
 ## One ticket, one branch, one worktree
 
-Worked in dependency order, each shippable on its own. Never switch or edit a main checkout's branch, and never `git stash`.
+Worked in dependency order, each shippable on its own. Never switch a main checkout's branch, and never `git stash`. A ticket whose PR a main checkout is already on is worked there, not in a new worktree (`Working style` in `~/.agents/AGENTS.md`).
 
 - Branch: `<firstname>/<key-lowercase>-<short-slug>` (the repo's convention, e.g. `aakif/eng-2149-verification-load-scope`).
 - `git -C ~/dev/<repo> fetch origin && git -C ~/dev/<repo> worktree add ~/dev/.claude/worktrees/<key-lowercase>-<slug> -b <branch> origin/<default-branch>` (`gh repo view --json defaultBranchRef` — development for backend, web and plugin).
