@@ -189,5 +189,50 @@ class Publishing(unittest.IsolatedAsyncioTestCase):
         self.assertIn('a.py:1', payload['body'])
 
 
+class Reviewer(unittest.TestCase):
+    def test_switch_is_stored_and_defaults_to_codex(self):
+        with tempfile.TemporaryDirectory() as root:
+            db = runner.database(Path(root))
+            self.assertEqual(runner.current_reviewer(CFG, db), 'codex')
+            self.assertEqual(runner.current_reviewer({**CFG, 'reviewer': 'claude'}, db), 'claude')
+            with db:
+                runner.put_setting(db, 'reviewer', 'claude')
+            self.assertEqual(runner.current_reviewer(CFG, db), 'claude')
+            with db:
+                runner.put_setting(db, 'reviewer', 'something-else')
+            self.assertEqual(runner.current_reviewer(CFG, db), 'codex')
+            columns = {row['name'] for row in db.execute('PRAGMA table_info(jobs)')}
+            self.assertIn('reviewer', columns)
+
+    def test_claude_runs_read_only_with_the_allow_list_last(self):
+        cfg = {**CFG, 'claude': 'claude', 'claude_allowed_tools': ['Read', 'Bash(git log *)']}
+        cmd = runner.claude_command(cfg, 'sess', runner.SCHEMA)
+        self.assertEqual(cmd[cmd.index('--setting-sources') + 1], '')
+        self.assertEqual(cmd[cmd.index('--permission-mode') + 1], 'dontAsk')
+        self.assertEqual(cmd[cmd.index('--resume') + 1], 'sess')
+        self.assertEqual(json.loads(cmd[cmd.index('--json-schema') + 1]), runner.SCHEMA)
+        self.assertEqual(cmd[cmd.index('--allowedTools'):], ['--allowedTools', 'Read', 'Bash(git log *)'])
+        settings = json.loads(runner.CLAUDE_SETTINGS.read_text())
+        for denied in ('Edit', 'Write', 'Bash(git push *)', 'Bash(gh api *)', 'Bash(gh pr review *)'):
+            self.assertIn(denied, settings['permissions']['deny'])
+
+    def test_claude_result_reads_the_last_result_and_refuses_errors(self):
+        with tempfile.TemporaryDirectory() as root:
+            events = Path(root) / 'e.jsonl'
+            events.write_text('{"type":"system"}\nnot json\n{"type":"result","result":"done","session_id":"s1",'
+                              '"structured_output":{"status":"ready"}}\n')
+            final = runner.claude_result(events)
+            self.assertEqual(final['session_id'], 's1')
+            self.assertEqual(final['structured_output'], {'status': 'ready'})
+            events.write_text('{"type":"result","is_error":true,"result":"boom"}\n')
+            with self.assertRaises(RuntimeError):
+                runner.claude_result(events)
+
+    def test_skill_text_drops_frontmatter(self):
+        text = runner.skill_text('review')
+        self.assertFalse(text.startswith('---'))
+        self.assertIn('$ARGUMENTS', text)
+
+
 if __name__ == '__main__':
     unittest.main()

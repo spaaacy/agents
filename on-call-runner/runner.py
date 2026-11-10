@@ -514,7 +514,7 @@ def headline(pages: Sequence[Page]) -> str:
 def report_footer(report: Report) -> str:
     parts = []
     if report.session_id:
-        parts.append(f"to pick up the follow-ups on your laptop: `claude --resume {report.session_id}`")
+        parts.append(f"to pick up the follow-ups on your laptop: `cd ~/dev/envoyai-backend && claude --resume {report.session_id}`")
     if report.cost_usd is not None:
         parts.append(f"${report.cost_usd:.2f}")
     return "\n\n" + " · ".join(parts) if parts else ""

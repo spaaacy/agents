@@ -4,11 +4,20 @@ This personal background tool watches `#devs` (`C0B2JHDCQ6M`) for new messages m
 
 It checks once per minute, including thread replies through Slack search. Slack search indexing can add delay. A one-day overlap catches delayed indexing; the last successful checkpoint also catches messages received while the Mac was asleep. Only requests posted after activation are eligible. Bots and Aakif's own messages are excluded. If one message assigns different PRs to different people, the adjacent mention group selects Aakif's links.
 
-The collector calls Codex's documented `mcpServer/tool/call` protocol without a model turn. Model usage starts only when a new PR needs review. The worker uses the model and reasoning settings in the normal Codex configuration, currently GPT-6 Astra with extra-high reasoning. One review runs at a time while the collector continues checking Slack.
+The collector calls Codex's documented `mcpServer/tool/call` protocol without a model turn. Model usage starts only when a new PR needs review. One review runs at a time while the collector continues checking Slack.
+
+## Who reviews: Codex or Claude
+
+`python3 runner.py reviewer claude` or `python3 runner.py reviewer codex` picks who reviews the next PR; `python3 runner.py reviewer` prints the current choice. No restart is needed: the worker reads it before each review, and a review already running finishes with its own reviewer. Each job records its reviewer, and `watch-pr-reviews` shows the current one. The Slack collector stays on Codex either way.
+
+- Codex uses the model and reasoning settings in the normal Codex configuration, with its normal protections and automatic approval review.
+- Claude runs headless, the slack-claude bot's way: none of the saved Claude settings (`--setting-sources ""`), `--permission-mode dontAsk` with `claude_allowed_tools` in `config.json` (reads, git and gh reads, tests), and the deny list in `claude-settings.json` (no edits, commits, pushes, `gh api`, PR comments or reviews, `az`, Slack). The review and post-review skills are given to it inline, and the draft comes back as structured output (`--json-schema`). Reopen a Claude review with `cd <review folder>/checkout && claude --resume <session>`; the viewer prints it.
+
+Both reviewers' drafts go through the same checks and the same publisher.
 
 ## Review behavior
 
-Each review gets a separate checkout at the PR's exact commit. Existing local repositories supply Git objects when available; other repositories in `envoy-ai` are cloned using GitHub CLI. Main checkouts stay on their existing branches. The first Codex turn runs `$review`; a second turn resumes that exact session and runs the draft step of `$post-review`. It saves the full review, the draft, session ID, and execution logs under `state/reviews/<key>/`.
+Each review gets a separate checkout at the PR's exact commit. Existing local repositories supply Git objects when available; other repositories in `envoy-ai` are cloned using GitHub CLI. Main checkouts stay on their existing branches. The first turn runs the review skill; a second turn resumes that exact session and runs the draft step of the post-review skill. It saves the full review, the draft, session ID, and execution logs under `state/reviews/<key>/`.
 
 The worker requests read-only review behavior, uses normal Codex protections with automatic approval review, and never bypasses the sandbox. Source files must remain unchanged. It does not run deployments or Azure CLI commands. Tool permission or sign-in failures are reported as failures, never answered with a fabricated approval.
 

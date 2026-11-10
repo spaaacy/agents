@@ -1,16 +1,32 @@
 #!/usr/bin/env python3
-"""Read-only terminal view of the Slack review worker's state and Codex events."""
+"""Read-only terminal view of the Slack review worker's state and its reviewer's events (Codex or Claude)."""
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 from pathlib import Path
 import re
 import sqlite3
+import sys
 import time
 
 ROOT = Path(__file__).resolve().parent
 ACTIVE = {"reviewing", "posting"}
+CLAUDE_EVENTS = {"system", "assistant", "user", "result"}  # Codex's event types never overlap these
+
+
+def _claude_view():
+    """slack-claude's renderer for Claude's stream-json events (thinking and raw tool output left out)."""
+    path = Path.home() / ".agents" / "slack-claude" / "watch.py"
+    spec = importlib.util.spec_from_file_location("slack_claude_watch", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+claude_view = _claude_view()
 
 
 def clean(value: object) -> str:
@@ -26,6 +42,14 @@ def emit(message: str) -> None:
 
 def render(event: dict) -> str | None:
     kind = event.get("type")
+    if kind in CLAUDE_EVENTS:
+        if kind == "result" and isinstance(event.get("structured_output"), dict):
+            draft = event["structured_output"]
+            lines = [f"Review draft ({draft.get('status', 'ready')}):", str(draft.get("body", ""))]
+            for comment in draft.get("comments", []):
+                lines.append(f"\n{comment.get('path', '?')}:{comment.get('line', '?')}\n{comment.get('body', '')}")
+            return "\n".join(lines)
+        return "\n".join(claude_view.render(event)) or None
     item = event.get("item", {})
     item_kind = item.get("type")
     if kind == "thread.started":
@@ -126,12 +150,16 @@ def job_summary(job: dict) -> str:
         if path.exists():
             summary += f"\n{name}: {path}"
     if job.get("session"):
-        summary += f"\nOpen saved conversation: codex resume {job['session']}"
+        if job.get("reviewer") == "claude":
+            checkout = Path(job["directory"]) / "checkout"
+            summary += f"\nOpen saved conversation: cd {checkout} && claude --resume {job['session']}"
+        else:
+            summary += f"\nOpen saved conversation: codex resume {job['session']}"
     return summary
 
 
 def watch(root: Path, once: bool = False) -> None:
-    print("\nSLACK → CODEX PR REVIEWS\n", flush=True)
+    print("\nSLACK → PR REVIEWS\n", flush=True)
     print("Live view of the automatic review worker. Closing this window only closes the view.\n"
           "Shows progress, commands, findings, and GitHub posting results.\n"
           "Full command output is saved beside each review. Ctrl-C closes this view.\n", flush=True)
@@ -162,11 +190,13 @@ def watch(root: Path, once: bool = False) -> None:
         scanned = float(settings.get("last_scan_ok", 0))
         stale = now - scanned > 180
         queued, running = counts.get("queued", 0), counts.get("running", 0)
-        health = (enabled, auto_post, stale, settings.get("scan_error", ""), queued, running)
+        health = (enabled, auto_post, stale, settings.get("scan_error", ""), queued, running, settings.get("reviewer"))
         if health != last_health or now - last_heartbeat >= 60:
             mode = ("auto-post COMMENT reviews" if auto_post else "draft only") if enabled else "disabled"
             scan_time = time.strftime("%H:%M:%S", time.localtime(scanned)) if scanned else "never"
-            emit(f"#devs — {mode}; {queued} queued, {running} running; last successful scan {scan_time}."
+            reviewer = settings.get("reviewer") or json.loads((root / "config.json").read_text()).get("reviewer", "codex")
+            emit(f"#devs — {mode}; reviewing with {reviewer}; {queued} queued, {running} running; "
+                 f"last successful scan {scan_time}."
                  + (" Scan is overdue; worker may be stopped or recovering." if stale and enabled else "")
                  + (f"\nSlack scan error: {settings['scan_error']}" if settings.get("scan_error") else ""))
             last_health, last_heartbeat = health, now
