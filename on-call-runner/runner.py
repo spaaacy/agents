@@ -304,13 +304,18 @@ class Slack:
     def open_dm(self, user: str) -> str:
         return str(self.call("conversations.open", users=user)["channel"]["id"])
 
-    def post(self, channel: str, text: str, thread_ts: str | None = None) -> str:
-        """Post text, split into Slack-sized messages; the first message's ts."""
+    def post(self, channel: str, text: str, thread_ts: str | None = None, broadcast: bool = False) -> str:
+        """Post text, split into Slack-sized messages; the first message's ts.
+
+        ``broadcast`` also shows a thread reply in the conversation itself, so it is seen and notifies.
+        """
         first = ""
         for chunk in shared.chunk_reply(text):
             payload: dict[str, Any] = {"channel": channel, "markdown_text": chunk, "unfurl_links": False}
             if thread_ts:
                 payload["thread_ts"] = thread_ts
+                if broadcast and not first:
+                    payload["reply_broadcast"] = True
             first = first or str(self.call("chat.postMessage", **payload)["ts"])
         return first
 
@@ -576,8 +581,12 @@ class Runner:
             if not last.get("ts"):
                 continue
             try:
+                # Broadcast: a reply hidden in an hours-old thread was missed (2026-11-10, 10:14 page).
                 self.slack.post(
-                    last["channel"], f"paged again at {pacific(page.at)}: {page.name} ({page.dest})", last["ts"]
+                    last["channel"],
+                    f"📟 paged again at {pacific(page.at)}: {page.name} ({page.dest}). same monitor as this thread, so no new run",
+                    last["ts"],
+                    broadcast=True,
                 )
             except Exception:  # noqa: BLE001 - a repeat note is a courtesy
                 log.warning("could not note a repeat page", exc_info=True)

@@ -83,9 +83,11 @@ class FakeDatadog:
 class FakeSlack:
     def __init__(self) -> None:
         self.posts: list[tuple[str, str, str | None]] = []
+        self.broadcasts: list[bool] = []
 
-    def post(self, channel: str, text: str, thread_ts: str | None = None) -> str:
+    def post(self, channel: str, text: str, thread_ts: str | None = None, broadcast: bool = False) -> str:
         self.posts.append((channel, text, thread_ts))
+        self.broadcasts.append(broadcast)
         return f"ts{len(self.posts)}"
 
     def permalink(self, channel: str, ts: str) -> str:
@@ -207,6 +209,7 @@ class Poll(StateIsolation):
         self.assertEqual(slack.posts[0][0], "D1")
         self.assertEqual(slack.posts[0][2], "123.4")
         self.assertIn("paged again", slack.posts[0][1])
+        self.assertTrue(slack.broadcasts[0])  # shown in the DM too, not only in the old thread
 
 
 class Prompt(unittest.TestCase):
