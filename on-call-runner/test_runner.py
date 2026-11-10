@@ -206,7 +206,7 @@ class Poll(StateIsolation):
         self.assertEqual(r.pending, [])
         self.assertEqual(slack.posts[0][0], "D1")
         self.assertEqual(slack.posts[0][2], "123.4")
-        self.assertIn("Paged again", slack.posts[0][1])
+        self.assertIn("paged again", slack.posts[0][1])
 
 
 class Prompt(unittest.TestCase):
@@ -219,6 +219,11 @@ class Prompt(unittest.TestCase):
         self.assertIn("Target: `3 9`.", prompt)
         self.assertIn("Ask nothing", prompt)
         self.assertIn("monitor 9", prompt)
+
+    def test_the_prompt_ends_with_his_voice_rules(self) -> None:
+        prompt = runner.build_prompt([page("a", 9)], "Target: `$ARGUMENTS`.")
+        self.assertIn("Voice (standing rule):", prompt)
+        self.assertGreater(prompt.index("Voice (standing rule):"), prompt.index("</skill>"))
 
     def test_the_real_skill_reads(self) -> None:
         self.assertIn("## Report", runner.skill_text())
@@ -257,7 +262,7 @@ class Investigate(StateIsolation):
             run.side_effect = lambda cfg, prompt, events: REAL_RUN_CLAUDE(cfg, prompt, events, self.fake_claude())
             report = r.investigate([page("a", 5)])
         self.assertIsNone(report.error)
-        self.assertIn("Datadog paged you", slack.posts[0][1])
+        self.assertIn("datadog paged you", slack.posts[0][1])
         self.assertIsNone(slack.posts[0][2])
         self.assertEqual(slack.posts[1][2], "ts1")
         self.assertIn("real: thing broke", slack.posts[1][1])
@@ -276,7 +281,7 @@ class Investigate(StateIsolation):
             )
             report = r.investigate([page("a", 5)])
         self.assertEqual(report.error, "boom")
-        self.assertIn("The investigation failed: boom", slack.posts[1][1])
+        self.assertIn("the investigation failed: boom", slack.posts[1][1])
 
     def test_once_without_post_writes_nothing_to_slack(self) -> None:
         slack = FakeSlack()

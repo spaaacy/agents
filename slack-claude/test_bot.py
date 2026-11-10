@@ -8,6 +8,7 @@ import time
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import bot
 import watch
@@ -139,8 +140,20 @@ class PromptTests(unittest.TestCase):
         self.assertIn("[Saumil] is the <outbox> stuck? link (https://x.dev/a)", prompt)
         self.assertIn("[you] No, it drained at 10:02.", prompt)
         self.assertIn("[Saumil] @Aakif it's stuck again", prompt)
-        self.assertTrue(prompt.endswith("Aakif's request:\ncheck again"))
+        self.assertIn("Aakif's request:\ncheck again\n", prompt)
         self.assertNotIn("posted after the request", prompt)
+
+    def test_every_prompt_ends_with_his_voice_rules(self):
+        agents = Path(tempfile.mkdtemp()) / "AGENTS.md"
+        agents.write_text("# x\n\n## Communication style\n\nshort.\n\n## Voice\n\nlowercase lines.\n\n## Tools\n\nnope\n")
+        with mock.patch.object(bot, "AGENTS_MD", agents):
+            reminder = bot.turn_reminder(agents)
+            prompt = bot.build_prompt(self.mention, self.thread, BOT, names, resumed=False)
+        self.assertIn("Communication style (standing rule):\nshort.", reminder)
+        self.assertIn("Voice (standing rule):\nlowercase lines.", reminder)
+        self.assertNotIn("nope", reminder)
+        self.assertTrue(prompt.endswith("lowercase lines."))
+        self.assertLess(prompt.index("check again"), prompt.index("Voice (standing rule)"))
 
     def test_a_resumed_session_gets_only_what_came_after_its_last_answer(self):
         prompt = bot.build_prompt(self.mention, self.thread, BOT, names, resumed=True)

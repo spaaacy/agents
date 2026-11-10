@@ -84,15 +84,15 @@ only mentioned you, answer the open question in the conversation, usually the \
 latest one someone asked. Talk to the person who asked as "you", never about \
 them in the third person: they are reading.
 
-How it should read:
-- Like a helpful teammate in Slack, not a report. The first sentence is the answer.
-- Short: two to five sentences is typical. Bullets only for three or more \
-parallel items, one line each. No headings, no bold labels, no "Evidence" or \
-"Sources" section, no sign-off.
-- Plain English for whoever asked. Most people asking are not engineers unless \
-the question is about code: say what the product does and where to click, not \
-how the code does it. File paths, function names and commands only when an \
-engineer asks about code, and then just the one or two that matter, inline.
+How it should read: the way Claude Code and Codex talk to Aakif, which is \
+how he texts teammates on Slack. His Voice and Communication style rules \
+(below, and repeated after every request) decide the wording: short lowercase \
+lines sent as he'd think them, the answer first, his shorthand and reactions, \
+no headings, no bold, no numbered walls of text, no sign-off. On top of them:
+- Most people asking are not engineers unless the question is about code: say \
+what the product does and where to click, not how the code does it. File \
+paths, function names and commands only when an engineer asks about code, and \
+then just the one or two that matter, inline.
 - If you're unsure of something that matters, say so once, plainly, at the end \
 ("not sure this is live yet"). Never describe your tools, what you couldn't \
 run, or how you found the answer.
@@ -243,6 +243,29 @@ def reply_detector(mention: Mention, bot_user_id: str, owner: str) -> Callable[[
     return lambda msg: msg.get("user") == bot_user_id
 
 
+def turn_reminder(agents_md: Path | None = None) -> str:
+    """The voice sections as his per-message hook sends them, for the end of every prompt.
+
+    In Claude Code and Codex the hook adds these to each message he sends;
+    rules said once in the system prompt fade over a long answer, so the bot
+    repeats them after each request the same way.
+    """
+    try:
+        text = (agents_md or AGENTS_MD).read_text()
+    except OSError:
+        return ""
+    parts = []
+    for section in VOICE_SECTIONS:
+        heading = f"## {section}\n"
+        if text.count(heading) == 1:
+            body = text.split(heading, 1)[1].split("\n## ", 1)[0].strip()
+            if body:
+                parts.append(f"{section} (standing rule):\n{body}")
+    if not parts:
+        return ""
+    return "Write the reply under his rules, as on every message he sends you:\n\n" + "\n\n".join(parts)
+
+
 def build_prompt(
     mention: Mention,
     conversation: list[dict[str, Any]],
@@ -280,6 +303,9 @@ def build_prompt(
     request = render_text(strip_bot_mention(mention.text, bot_user_id), names)
     lines.append("Aakif's request:")
     lines.append(request or "(he only mentioned you: answer the open question above, speaking to whoever asked it)")
+    reminder = turn_reminder()
+    if reminder:
+        lines += ["", reminder]
     return "\n".join(lines)
 
 
