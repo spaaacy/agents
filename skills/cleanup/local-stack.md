@@ -29,7 +29,7 @@ Then wait for the api: `curl -s -o /dev/null -w '%{http_code}' --max-time 5 loca
 
 ## Never
 
-Downgrade, stamp backwards, stamp past a revision whose objects are not all present, `docker compose down -v`, delete `dockerdata/postgres-data`, drop the dev database, run `docker compose` from a worktree, or run `az`. Wiping the database is /cleanup's case d and always the user's call.
+Downgrade (the one exception is the undo /spotlight runs, before its switch, after the user approved it), stamp backwards, stamp past a revision whose objects are not all present, `docker compose down -v`, delete `dockerdata/postgres-data`, drop the dev database, run `docker compose` from a worktree, or run `az`. Wiping the database is /cleanup's case d and always the user's call.
 
 ## Report line
 

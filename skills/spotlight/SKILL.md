@@ -1,6 +1,6 @@
 ---
 name: spotlight
-description: Put the main checkouts on one ticket's PR stack and remove the worktrees in two phases - report first, then act on its own: it removes only worktrees verified clean and pushed, keeps and lists the rest, and never asks. It always finishes with the local docker stack running, migrated to the switched-to checkout, and the api answering, and, when chat-ui moved or is in the stack, with chat-ui built and linked into web and the extension so its local changes show up. Use for "/spotlight ENG-1234", "spotlight this ticket", "delete all worktrees and check out the stack", or "put the main branches on top of a ticket/PR".
+description: Put the main checkouts on one ticket's PR stack and remove the worktrees in two phases - report first, then act on its own: it removes only worktrees verified clean and pushed, keeps and lists the rest, and asks one thing only, whether to undo another branch's migrations on the local database when they block the backend switch. It always finishes with the local docker stack running, migrated to the switched-to checkout, and the api answering, and, when chat-ui moved or is in the stack, with chat-ui built and linked into web and the extension so its local changes show up. Use for "/spotlight ENG-1234", "spotlight this ticket", "delete all worktrees and check out the stack", or "put the main branches on top of a ticket/PR".
 ---
 
 Target: `$ARGUMENTS`. A Linear key (`ENG-1234`) or Linear URL; a GitHub PR URL or number also works when its title, branch or body names the ticket. Nothing means the ticket this conversation is about (`Shared skill arguments` in `~/.agents/AGENTS.md`); only when there is none, ask which ticket with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options) and stop.
@@ -9,7 +9,7 @@ Scope: the main checkouts at `~/dev/envoyai-backend`, `~/dev/envoyai-web`, `~/de
 
 Flow: this puts work `/pickup` already opened in front of you in the main checkouts. It can remove every linked worktree, including other tickets' work, but only after showing what each holds, and only the ones verified clean and pushed. `/cleanup` owns leftover-directory and database cleanup; this skill only leaves the local docker stack up to date and running after the switch, through `~/.agents/skills/cleanup/local-stack.md` (a switch is what leaves the database behind, and the api then refuses to boot). Anything that procedure leaves to the user is `/cleanup migrations`. `/fix` owns keeping the PRs green; this skill does not. Once a main checkout is on a PR's branch, every skill works on that PR there instead of in a new worktree (`Working style` in `~/.agents/AGENTS.md`).
 
-Two phases. **Phase 1 always runs first**: read the stack and local state, changing nothing except `git -C <repo> fetch --prune origin` and the requested `git -C <repo> worktree prune` metadata cleanup. Read-only reads of the local docker database are allowed. No pull, checkout, worktree removal, migration or file edit. Print the report. **Phase 2 then runs straight away, with no question**, on a removal set decided by these rules, not asked:
+Two phases. **Phase 1 always runs first**: read the stack and local state, changing nothing except `git -C <repo> fetch --prune origin` and the requested `git -C <repo> worktree prune` metadata cleanup. Read-only reads of the local docker database are allowed. No pull, checkout, worktree removal, migration or file edit. Print the report. **Phase 2 then runs straight away, with no question** (the one exception: the local database question in phase 1's report, below), on a removal set decided by these rules, not asked:
 - Every linked worktree verified clean and pushed: remove all of them (only this ticket's when the request said `only` or to keep other tickets' work).
 - Some worktree dirty, unpushed, without an upstream, or unreadable: remove this ticket's clean, pushed worktrees only (every clean, pushed one when the request said `all`). Keep the flagged ones and list them in the report. A flagged tree is removed only when the request names its path or branch, after a report that showed its warning.
 - None of this ticket's worktrees is clean and pushed, and the request did not say `all`: remove nothing, move nothing, and stop after the report, saying what has to be committed or pushed first.
@@ -60,6 +60,8 @@ If a local target branch exists, compare it with its fetched remote using `git -
 
 The stack not running, or a read that fails, is **local database not read**, never "current". Whether the target's head is ahead of the stamp is decided in phase 2, inside the api container, once the checkout holds the target's migrations.
 
+**A stamp not in the target's chain** is another branch's migration (usually the branch the backend checkout is on now). Find what undoing it takes: from the stamp, read its revision file's `down_revision` in `$B/alembic/versions/` (the current checkout holds it), and repeat until you reach a revision the target has (`git -C $B grep -l "<revision>" <target-sha> -- alembic/versions`). The revisions walked past are the ones to undo; the one reached is where the database would land. For each, read its `downgrade()` and note what it drops (columns, tables, enum types, rows). It can be undone here only when the current checkout holds every one of those files, none is a merge revision (a tuple `down_revision`), and every `downgrade()` really reverses its upgrade (not `pass`, not a raise). Otherwise it cannot, and the backend stays where it is.
+
 ## 4. Report
 
 Answer first: `<KEY> — <n> linked worktrees, <n> this ticket's; <repo> targets <branch> (#<pr>), ...`. One line per worktree and one per main checkout, plus changed-file details where needed:
@@ -73,12 +75,14 @@ Worktrees
 Main checkouts
   <repo>: <current>@<sha> → <target>@<sha> (#<pr> or all merged / no PRs); tracked changes: <n>; <refusal if any>
 Local database
-  stamp <revision> | in the target's chain | not in the target's chain → /cleanup migrations | not read: <why>
+  stamp <revision> | in the target's chain | not in the target's chain: undo <revisions> → lands on <revision>; drops <what> | cannot be undone here: <why> | not read: <why>
   api: healthy | refusing to boot: <the log line> | not running
 Not checked: <unread repos, dependencies, other omissions>
 ```
 
-End the report with the removal set phase 2 is about to take (the rule from the top that picked it), then go straight to phase 2. Never ask which set to remove, and never ask about the local database or the stack: both are decided by the rules here and in `local-stack.md`.
+End the report with the removal set phase 2 is about to take (the rule from the top that picked it), then go straight to phase 2. Never ask which set to remove, and never ask about the stack: both are decided by the rules here and in `local-stack.md`.
+
+The one question: when the stamp is not in the backend target's chain and it can be undone here, ask once with the structured question tool before phase 2, naming the revisions, what their downgrades drop, and that going back to the old branch re-applies them on the api's next start. Options: undo them and move the backend (Recommended), or leave the backend where it is. Any other database state is never a question.
 
 Nothing approves deleting a tree with uncommitted or unpushed work, no upstream, or unreadable state except a request that names its path or uniquely identified branch after seeing its warning. Unknown state must become readable before any removal. Keep local branches unless the request explicitly asks to delete one. An explicit phase-1-only dry run ends with the report and the removal set phase 2 would take, and changes nothing.
 
@@ -94,7 +98,10 @@ Keep local branches unless the request explicitly asked to delete one. Even then
 
 ## 2. Move each main checkout
 
-Backend first: when phase 1 found the local database's stamp NOT in the backend target's chain (a revision the target branch does not have), leave the backend checkout where it is and move the other repos as usual. Switching would strand the api: the target's code cannot start against a database stamped past its chain. Report `backend left on <branch>: the local database has <revision>, which <target> does not have`, then the way forward: `/fix <pr>` when the revision is on `development` and the PR is just behind it, otherwise that it moves once the branch carrying the revision merges. This is never a question.
+Backend first: when phase 1 found the local database's stamp NOT in the backend target's chain (a revision the target branch does not have), switching as-is would strand the api, since the target's code cannot start against a database stamped past its chain.
+
+- **The user approved undoing it:** before switching, while the checkout still holds the revision files, run `docker compose -f $B/docker-compose.yaml exec -T api alembic downgrade <landing revision>` (the revision phase 1 reached, never `base` or a relative step past it), then read the stamp again. It reads the landing revision: switch the backend like any other repo below. Anything else (an error, another stamp): stop, leave the backend where it is, and report the output; never retry with a different target or force it.
+- **Declined, or it cannot be undone here:** leave the backend checkout where it is and move the other repos as usual. Report `backend left on <branch>: the local database has <revision>, which <target> does not have`, then the way forward: `/fix <pr>` when the revision is on `development` and the PR is just behind it, otherwise that it moves once the branch carrying the revision merges, or that `/spotlight` can undo it when rerun and approved.
 
 Re-read the main checkout's HEAD and tracked status immediately before switching. Refuse and report tracked changes, an unresolved target, an unverified remote, or a checkout changed since the report; do not fix them. Never stash, never `reset --hard`, never rebase, never force a switch. Untracked files stay; if they would be overwritten, let git refuse and report it.
 
@@ -108,7 +115,7 @@ Run the pull only after a successful switch. If a local feature branch has no up
 
 Compare the old and actual final SHA, not just branch names. On web and chrome-plugin, `git -C <repo> diff --name-only <old-sha> <new-sha> -- package-lock.json`: if changed, say `npm ci` is needed; do not run it. On backend, the same check for `poetry.lock`: the local stack step restarts the services so their startup installs it inside the containers; never run `poetry install` on the host.
 
-Then follow `~/.agents/skills/cleanup/local-stack.md` with the backend's old and actual final SHA, whether or not it moved (the database can already be behind, as an api refusing to boot in phase 1 shows): it starts the stack if it is down, restarts what the switch needs, waits for the api to answer, and moves the stamp past a migration the database already holds only when every object it creates is there. If the old branch lacks revisions the startup applied, say that switching back to it will leave the database ahead of that code. Never downgrade, wipe, `docker compose down -v`, or run `az`; whatever that procedure leaves to the user is reported and named `/cleanup migrations`.
+Then follow `~/.agents/skills/cleanup/local-stack.md` with the backend's old and actual final SHA, whether or not it moved (the database can already be behind, as an api refusing to boot in phase 1 shows): it starts the stack if it is down, restarts what the switch needs, waits for the api to answer, and moves the stamp past a migration the database already holds only when every object it creates is there. If the old branch lacks revisions the startup applied, say that switching back to it will leave the database ahead of that code. Never downgrade beyond the approved undo above, wipe, `docker compose down -v`, or run `az`; whatever that procedure leaves to the user is reported and named `/cleanup migrations`.
 
 Then, when chat-ui's checkout moved or the stack has a chat-ui PR, follow `chat-ui-link.md` in this folder: it builds chat-ui and points web (a symlink) and the extension (a copy of the build) at it, without building or running either app. When web or the extension also needs `npm ci`, say the link has to be redone after it (rerun `/spotlight`).
 
@@ -118,6 +125,7 @@ Answer first: `<KEY> — removed <n> worktrees; moved <n> main checkouts; <n> re
 
 ```
 <repo>: <old branch>@<sha> → <new branch>@<sha>; <lockfile notice or refusal>
+Local database undone: <revisions> → <landing revision> (approved), or none
 Removed: <absolute worktree paths>
 Branches deleted: <names, or none; kept by default>
 <the local-stack.md report line>
