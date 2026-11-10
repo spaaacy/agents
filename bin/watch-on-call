@@ -1,0 +1,3 @@
+#!/bin/zsh
+# Live view of the on-call runner, in this terminal. Ctrl-C closes the view; the runner keeps going.
+exec /Users/aakifmohamed/.pyenv/versions/3.12.8/bin/python3 -u "$HOME/.agents/on-call-runner/watch.py" "$@"
