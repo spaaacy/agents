@@ -305,5 +305,64 @@ class WatchView(unittest.TestCase):
         self.assertIn("2 pages waiting", line)
 
 
+class DatadogHelper(unittest.TestCase):
+    def test_the_prompt_points_unattended_runs_at_the_helper(self) -> None:
+        prompt = runner.build_prompt([page("a", 9)], "Target: `$ARGUMENTS`.")
+        self.assertIn(str(runner.HERE / "dd.py"), prompt)
+        allowed = json.loads(runner.CONFIG_FILE.read_text())["allowed_tools"]
+        self.assertIn(f"Bash(python3 {runner.HERE / 'dd.py'} *)", allowed)
+
+    def test_metric_prints_min_max_last_without_the_keys(self) -> None:
+        import io
+        from contextlib import redirect_stdout
+
+        import dd
+
+        class Response(io.BytesIO):
+            def __enter__(self) -> "Response":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+        body = {"series": [{"scope": "env:production", "pointlist": [[1794330000000, 2.0], [1794330060000, 9.0], [1794330120000, 4.0]]}]}
+        seen: list[Any] = []
+
+        def opener(request: Any) -> Response:
+            seen.append(request)
+            return Response(json.dumps(body).encode())
+
+        with mock.patch.dict("os.environ", {"DD_API_KEY": "secret-api", "DD_APP_KEY": "secret-app"}):
+            client = dd.Client(opener)
+            out = io.StringIO()
+            with redirect_stdout(out):
+                dd.cmd_metric(client, "max:x{env:production}", 60)
+        self.assertIn("min 2, max 9, last 4", out.getvalue())
+        self.assertNotIn("secret", out.getvalue())
+        self.assertEqual(seen[0].get_method(), "GET")
+
+
+class Permalink(unittest.TestCase):
+    def test_asks_with_query_arguments_not_a_json_body(self) -> None:
+        import io
+
+        class Response(io.BytesIO):
+            def __enter__(self) -> "Response":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+        seen: list[Any] = []
+
+        def opener(request: Any) -> Response:
+            seen.append(request)
+            return Response(json.dumps({"ok": True, "permalink": "https://x/p1"}).encode())
+
+        self.assertEqual(runner.Slack("t", opener).permalink("D1", "1.2"), "https://x/p1")
+        self.assertIn("channel=D1", seen[0].full_url)
+        self.assertIsNone(seen[0].data)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -90,10 +90,12 @@ Aakif picks them later by resuming this session on his laptop.
 anyone sees: the skill's report only, no preamble. Slack markdown: no \
 headings, no tables.
 - Your tools are read-only, and anything the skill would write is a follow-up \
-to list, not to do. The Datadog keys are already in the environment: run \
-`python3 monitoring/history.py ...` from the backend checkout as it is, never \
-source the keys file. One command per Bash call: a chained command is refused \
-whole.
+to list, not to do. The session's Datadog tools are not connected in an \
+unattended run; read Datadog with `python3 {dd} ...` (monitors, logs, \
+logs-count, metric; `--help` for the arguments) and `python3 \
+monitoring/history.py ...` from the backend checkout. The keys are already in \
+the environment: never source the keys file. One command per Bash call: a \
+chained command is refused whole.
 - When a page has already cleared, say so and how long it lasted; it still \
 gets its class and evidence.
 
@@ -310,8 +312,15 @@ class Slack:
         return first
 
     def permalink(self, channel: str, ts: str) -> str | None:
+        """chat.getPermalink takes form arguments, not a JSON body."""
+        query = urllib.parse.urlencode({"channel": channel, "message_ts": ts})
+        request = urllib.request.Request(
+            f"{SLACK_API}/chat.getPermalink?{query}", headers={"Authorization": f"Bearer {self.token}"}
+        )
         try:
-            return str(self.call("chat.getPermalink", channel=channel, message_ts=ts)["permalink"])
+            with self.opener(request) as response:
+                result = dict(json.load(response))
+            return str(result["permalink"]) if result.get("ok") else None
         except Exception:  # noqa: BLE001 - a link is a courtesy
             return None
 
@@ -388,7 +397,9 @@ def skill_text(path: Path = SKILL_FILE) -> str:
 def build_prompt(pages: Sequence[Page], skill: str) -> str:
     monitors = " ".join(sorted({str(page.monitor_id) for page in pages}))
     return UNATTENDED.format(
-        pages="\n".join(page.line() for page in pages), skill=skill.replace("$ARGUMENTS", monitors)
+        pages="\n".join(page.line() for page in pages),
+        skill=skill.replace("$ARGUMENTS", monitors),
+        dd=HERE / "dd.py",
     )
 
 
