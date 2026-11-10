@@ -101,6 +101,9 @@ the environment: never source the keys file. One command per Bash call: a \
 chained command is refused whole.
 - When a page has already cleared, say so and how long it lasted; it still \
 gets its class and evidence.
+- When one of Aakif's own tools got in your way (this run's allow list, dd.py, \
+history.py, the on-call skill, the pg-readonly server), add a last follow-up \
+naming the problem and the fix you'd suggest.
 
 <skill name="on-call">
 {skill}
