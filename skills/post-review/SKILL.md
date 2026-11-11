@@ -18,7 +18,8 @@ Build the review from the findings, then go straight to step 2; running this ski
 - The one thing that matters most and what it does to a user, carrier, customer, or on-call engineer.
 - If the change drifted from the ticket, say what was asked vs what shipped in one sentence.
 - Close with what to do first. If there are polish items, one sentence: "Nits inline: a, b, c."
-No headers, no tables, no severity counts.
+- A follow-up review says so up front: it covers the commits since the earlier review (link that review when it was posted), and only the new findings are inline. An earlier finding the new commits fixed gets a few words, never a comment.
+No headers, no tables, no severity counts. The body's last line is `<!-- review-skill head=<sha> -->`, with the full sha from the review's **Reviewed at** line: it is invisible on GitHub and tells the next `/review` what was already reviewed.
 
 **Inline comments**, one per Blocking and Should fix finding, anchored on the exact line from the review:
 - 1 to 3 sentences. Start with what breaks and for whom, then the fix in a few words. A suggestion block only when the fix is a self-contained few-line change.

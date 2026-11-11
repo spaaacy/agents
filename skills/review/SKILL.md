@@ -1,13 +1,34 @@
 ---
 name: review
-description: Pre-PR self-review of a branch or PR. Product regressions and unrequested behavior changes first, then verified engineering findings ranked by blast radius. Once the report is out, asks whether to post it with /post-review.
+description: Pre-PR self-review of a branch or PR. Product regressions and unrequested behavior changes first, then verified engineering findings ranked by blast radius. Run again on a PR it already reviewed, it reviews only what changed since (a follow-up review); `full` reviews everything again. Once the report is out, asks whether to post it with /post-review.
 ---
 
-Review $ARGUMENTS. A PR number or PR URL means `gh pr view` + `gh pr diff` (both accept either form); a branch name is diffed against the repo's default branch; nothing means the PR or branch this conversation is about (`Shared skill arguments` in `~/.agents/AGENTS.md`), else the current branch against its base, including uncommitted changes. Read-only: never edit.
+Review $ARGUMENTS. A PR number or PR URL means `gh pr view` + `gh pr diff` (both accept either form); a branch name is diffed against the repo's default branch; nothing means the PR or branch this conversation is about (`Shared skill arguments` in `~/.agents/AGENTS.md`), else the current branch against its base, including uncommitted changes. A target this skill reviewed before gets a follow-up review of what changed since (step 0); `full` in the arguments reviews the whole change again. Read-only on the code: never edit. The one write is the review record (Record it, below).
 
 This is the author's own review before the PR goes up. The reader wrote the code with AI assistance and is worried about product changes slipping in unnoticed, so be blunt, lead with behavior, and never soften a finding because the author is the reader.
 
-Flow: `/pickup` produced the branch; this is the first look at it. Its output feeds `/post-review` (puts it on the PR as one review), which this skill offers to run once the report is out. Findings the author fixes on the branch go through the ordinary edit-test loop; a finding about agent behaviour with no scenario is fixed under the "Measure" section of `~/.agents/skills/fix/evals.md`. Once reviewers comment, the author's side is `/address-review`, and `/verify-fixes` checks that round. This skill never fixes anything.
+Flow: `/pickup` produced the branch; this is the first look at it, and each later run looks only at the commits that landed after the last one. Its output feeds `/post-review` (puts it on the PR as one review), which this skill offers to run once the report is out. Findings the author fixes on the branch go through the ordinary edit-test loop; a finding about agent behaviour with no scenario is fixed under the "Measure" section of `~/.agents/skills/fix/evals.md`. Once reviewers comment, the author's side is `/address-review`, and `/verify-fixes` checks that round. This skill never fixes anything.
+
+## 0. First review or follow-up
+Unless the arguments say `full`, find the last review this skill did of the target. Two places hold it:
+- The record this skill keeps: `~/.agents/state/review/<owner>-<repo>-<pr number>.jsonl`, one JSON line per review, newest last. A branch with no PR uses `<owner>-<repo>-<branch, / replaced by ->.jsonl`; for a PR, read its branch's file too, since a review from before the PR opened counts.
+- The PR's own reviews: `gh pr view <pr> --json reviews`. A review whose body holds `<!-- review-skill head=<sha> -->` was posted by `/post-review` and reviewed that sha; one holding `<!-- slack-pr-review:` was posted by the Slack review bot and reviewed its `commit.oid`.
+The newest of these, by time, is the last review and its head the last reviewed head. Nothing found: a first review, straight to step 1.
+
+Otherwise work out what is new since that head:
+- Make sure the commit is here: `git rev-parse --verify <sha>^{commit}`, else `git fetch origin <sha>`. If it cannot be had (rewritten away and no longer served), do a full review and say why in the first line.
+- Same head as now, and for a branch review no uncommitted changes: say "Nothing new since the review of <short sha> on <date>. `/review <target> full` reviews it all again." and stop, with no record and no posting question.
+- The last head is an ancestor of the current one (`git merge-base --is-ancestor`) and no merge commit sits between them (`git log --merges <old>..HEAD` is empty): the new work is `git log <old>..HEAD` and `git diff <old>..HEAD`.
+- Otherwise the branch was rebased, force-pushed or had its base merged in: `git range-diff <merge-base of base and old>..<old> <merge-base of base and HEAD>..HEAD`. Commits marked `>` (new) or `!` (changed; the patch difference shows how) are the new work, and `=` commits were reviewed already. Commits the base brought in are not the PR's and are not reviewed, but a merge commit's conflict resolutions are (`git show --remerge-diff <merge>`). If the two sides cannot be paired (a squash), do a full review and say why.
+- In a branch review, uncommitted changes are always new. Uncommitted work an earlier review saw is reviewed again once it is committed.
+
+Read the last review's findings too: the record's `report`, or the posted review's body plus its inline comments (`gh api repos/{owner}/{repo}/pulls/{n}/reviews/{id}/comments`; when that read is refused, the body alone).
+
+A follow-up runs steps 1 to 4 over the new work only:
+- Context is the same: the ticket and the whole PR, because new work is judged in its context.
+- The behavior ledger, intent and findings cover only what the new work changes or breaks. A finding can sit in code the new work did not touch, when the new work is what breaks it.
+- Earlier findings are not reported again. When the new work touches one, say in one line whether it now looks fixed or still stands; checking every earlier finding is `/verify-fixes`'s job.
+- Anything the last report listed under Not verified that the new work touches is checked now, or listed again.
 
 ## 1. Context
 Find the ticket (Linear key in the branch name, commits, or PR body) and write down in one paragraph what was asked. Read the whole diff, then the code around it: callers and callees of every changed symbol, the tests covering them, sibling code that solves a similar problem (the baseline for "how this codebase does it"), and git log on the touched files. Read the rules: the repo's file under `repos/` next to this skill, named after the origin remote's repository (`basename -s .git "$(git remote get-url origin)"`, e.g. `repos/envoyai-backend.md`; this works from a linked worktree too), a `REVIEW.md` at the repo root if one exists, and every `CLAUDE.md` from the root down to the changed paths. No `repos/` file for this remote is fine; do not create one. Check the branch merges cleanly against its base.
@@ -44,7 +65,7 @@ Severity is production blast radius, not how interesting the finding is:
 If a severity rests on something inferred rather than checked, say what it drops to if the inference is wrong.
 
 ## Output
-Open with one line: `<n> blocking · <n> should fix · <n> polish`, or "No blocking issues".
+Open with one line: `<n> blocking · <n> should fix · <n> polish`, or "No blocking issues". A follow-up opens with `Follow-up on <old short sha>..<new short sha>: ` before it, then adds **New since last review** (one line per new or changed commit: short sha and subject) and, when the new work touched any, **Earlier findings touched** (one line each: fixed or still stands). Everything below then covers the new work only.
 
 **Ask** — the ticket in one paragraph.
 
@@ -58,6 +79,11 @@ Open with one line: `<n> blocking · <n> should fix · <n> polish`, or "No block
 **Not verified** — tests not run, lint not run, assumptions inferred rather than checked.
 
 **Merge** — Ready to open / Fix first / Rethink, one sentence why.
+
+**Reviewed at** — the full head sha the review read, plus "with uncommitted changes" when it read them. `/post-review` marks the posted review with it.
+
+## Record it
+Once the report is out, append one JSON line to the record file step 0 names (`mkdir -p ~/.agents/state/review` first): `{"reviewed_at": "<ISO time>", "repo": "<owner>/<repo>", "pr": <number or null>, "branch": "<head branch>", "head": "<full sha reviewed>", "base": "<base branch>", "base_sha": "<sha>", "kind": "full" or "follow-up", "since": "<last reviewed head or null>", "uncommitted": <true or false>, "report": "<the report as shown>"}`. Write it with a short script, never by hand-escaping the report on a command line. If the write is refused (an unattended run), go on without it: a posted review carries its head on GitHub.
 
 ## Then ask about posting
 Once the report is out, find the open PR for the target (the PR reviewed, or the open PR for the reviewed branch: `gh pr view <branch> --json number,state`). When there is one, ask with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list with lettered options): "Post this review to #<n> with /post-review?", with two options, Post it and Don't post. Recommend Post it when the review found anything, Don't post when it found nothing. Each option's description says what happens: one GitHub review with a summary and an inline comment per Blocking and Should fix finding, or nothing posted. On Post it, run `/post-review <n>` in this conversation straight away; the answer is its go. On Don't post, stop. With no open PR there is nothing to post to: skip the question and end with one line on what to fix first on the branch.

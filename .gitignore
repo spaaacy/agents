@@ -6,3 +6,4 @@ slack-pr-review/state/
 slack-claude/state/
 slack-claude/.venv/
 on-call-runner/state/
+state/

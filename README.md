@@ -20,7 +20,7 @@ The skills under `skills/` are one lifecycle, and each one names its neighbours 
 
 ```
 /pickup <ticket>        context, then on go: worktree, test-first build, draft PR
-  /review <pr>          the author's own pre-PR review (read-only)
+  /review <pr>          the author's own pre-PR review (read-only); run again, it reviews only what's new since
     /post-review        posts it as one GitHub review; /review asks whether to run it
   /impact <pr>          what a PR delivers for carriers, reps and admins, no code (read-only)
   /fix <pr|ticket>      keeps PRs level with development and CI green, triages red evals; never merges
