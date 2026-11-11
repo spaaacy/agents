@@ -1,6 +1,6 @@
 ---
 name: spotlight
-description: Put the main checkouts on one ticket's PR stack and remove the worktrees in two phases - report first, then act on its own: it removes only worktrees verified clean and pushed, keeps and lists the rest, and asks one thing only, whether to undo another branch's migrations on the local database when they block the backend switch. It always finishes with the local docker stack running, migrated to the switched-to checkout, and the api answering, and, when chat-ui moved or is in the stack, with chat-ui built and linked into web and the extension so its local changes show up. Use for "/spotlight ENG-1234", "spotlight this ticket", "delete all worktrees and check out the stack", or "put the main branches on top of a ticket/PR".
+description: Put the main checkouts on one ticket's PR stack and remove the worktrees in two phases - report first, then act on its own: it removes only worktrees verified clean and pushed, keeps and lists the rest, and asks one thing only, whether to undo another branch's migrations on the local database when they block the backend switch. It always finishes with the local docker stack running, migrated to the switched-to checkout, and the api answering, and, when chat-ui moved or is in the stack, with chat-ui built and linked into web and the extension so its local changes show up. A main checkout that was sitting on another ticket's branch whose PR is still open (the last spotlight) gets that branch back in its own worktree once it moves, so spotlighting the next ticket undoes the previous one. Use for "/spotlight ENG-1234", "spotlight this ticket", "delete all worktrees and check out the stack", or "put the main branches on top of a ticket/PR".
 ---
 
 Target: `$ARGUMENTS`. A Linear key (`ENG-1234`) or Linear URL; a GitHub PR URL or number also works when its title, branch or body names the ticket. Nothing means the ticket this conversation is about (`Shared skill arguments` in `~/.agents/AGENTS.md`); only when there is none, ask which ticket with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options) and stop.
@@ -13,7 +13,7 @@ Two phases. **Phase 1 always runs first**: read the stack and local state, chang
 - Every linked worktree verified clean and pushed: remove all of them (only this ticket's when the request said `only` or to keep other tickets' work).
 - Some worktree dirty, unpushed, without an upstream, or unreadable: remove this ticket's clean, pushed worktrees only (every clean, pushed one when the request said `all`). Keep the flagged ones and list them in the report. A flagged tree is removed only when the request names its path or branch, after a report that showed its warning.
 - None of this ticket's worktrees is clean and pushed, and the request did not say `all`: remove nothing, move nothing, and stop after the report, saying what has to be committed or pushed first.
-Then move the main checkouts and leave the local stack up to date and running. A request to "delete all worktrees" still gets the inventory first. Say what you did not check.
+Then move the main checkouts, put the previous spotlight back in worktrees (phase 2 step 3), and leave the local stack up to date and running. A request to "delete all worktrees" still gets the inventory first. Say what you did not check.
 
 # Phase 1: inspect
 
@@ -52,6 +52,8 @@ For each main checkout, read its branch, HEAD, and tracked changes with `git -C 
 
 If a local target branch exists, compare it with its fetched remote using `git -C <repo> rev-list --left-right --count <target>...origin/<target>` (local-only, remote-only). With local-only commits, the remote SHA is not necessarily where it would land: show the local SHA and both counts, and refuse that repo unless an ordinary fast-forward can reach the reported target. Never silently discard local commits or promise a remote SHA when the local branch is ahead. Check the feature branch tracks `origin/<target>`; a different configured upstream is a refusal, not permission to pull some other branch or reconfigure it.
 
+**The previous spotlight.** A main checkout on a branch that is not `development`, `staging`, `production`, `main`, `master` or the repo's default, and is neither this repo's target nor a branch in the resolved stack, is sitting on another ticket's work, usually the last spotlight. Read its PR with `gh pr list -R envoy-ai/<repo> --head <branch> --state all --limit 10 --json number,title,state,url`. An OPEN PR means the branch goes back to a worktree in phase 2, at `~/dev/.claude/worktrees/<key>-<repo>` (the ticket key from the branch or PR title, lowercased, else the branch name after its `<firstname>/` prefix; `<repo>` is `backend`, `web`, `plugin`, `chat-ui` or `ci-workflows`), or `~/dev/.claude/worktrees/<branch name after its prefix>-<repo>` when that path is already taken. Both taken: no worktree, and the report says why. A merged or closed PR, or no PR at all, gets no worktree: the local branch stays as it always does, and the report says so. A checkout that is on the branch with tracked changes is refused in phase 2 anyway, so it stays on that branch and needs no worktree.
+
 **The backend's local database.** Read it from the docker stack, which is local by construction; never through the `pg-readonly` MCP or any configured connection, which point at production or staging. With `B=<absolute backend path>`:
 
 - Stamp: `docker compose -f $B/docker-compose.yaml exec -T postgres psql -U envoy -d envoy -Atc "select version_num from alembic_version"`.
@@ -74,6 +76,8 @@ Worktrees
     changed: <paths>
 Main checkouts
   <repo>: <current>@<sha> → <target>@<sha> (#<pr> or all merged / no PRs); tracked changes: <n>; <refusal if any>
+Back to a worktree
+  <repo>: <old branch> (#<pr> open, <KEY>) → <absolute path> | not restored: <PR merged / closed / no PR / path taken>
 Local database
   stamp <revision> | in the target's chain | not in the target's chain: undo <revisions> → lands on <revision>; drops <what> | cannot be undone here: <why> | not read: <why>
   api: healthy | refusing to boot: <the log line> | not running
@@ -111,7 +115,18 @@ Re-read the main checkout's HEAD and tracked status immediately before switching
 
 Run the pull only after a successful switch. If a local feature branch has no upstream, report and refuse rather than guessing or changing configuration. If a pull refuses to fast-forward, read `git -C <repo> rev-list --left-right --count HEAD...origin/<target>` and report how many commits are local-only and remote-only, plus where the checkout actually stopped. An ahead-only local target also cannot land on the fetched remote by fast-forward; refuse it. Never force or repair divergence. A pull can fetch a newer remote tip than the preview; show the actual final SHA.
 
-## 3. Dependencies and the local stack
+## 3. Put the previous spotlight back in a worktree
+
+For each repo phase 1 marked for a worktree, and only once its main checkout really moved off that branch (a refused or left-in-place checkout still holds it, so it gets none): re-read that the PR is still open, that the path is still free, and that no other worktree has the branch, then `git -C <repo> worktree add <absolute-path> <old-branch>`. It checks out the existing local branch as it is, so commits that were only local stay with it: no `-b`, no reset, no pull, no `--force`. A refusal is reported and left; never delete or reuse a directory to make it work.
+
+Then the repo's worktree setup, so the PR is workable there the way `/pickup` left it:
+
+- Backend: from inside the worktree, `<main venv>/bin/python -m scripts.dev.worktree_bootstrap`, where the main venv is `( cd <absolute backend path> && poetry env info -p )`. A brand-new worktree cannot run it through `poetry run` (poetry would make an empty venv for the new path). Never `poetry install` and never `docker compose` there.
+- web, plugin, chat-ui: `npm ci` in the worktree, which touches only that worktree. chat-ui is linked into the main checkouts, never into a restored worktree.
+
+A setup that fails keeps the worktree; report the error.
+
+## 4. Dependencies and the local stack
 
 Compare the old and actual final SHA, not just branch names. On web and chrome-plugin, `git -C <repo> diff --name-only <old-sha> <new-sha> -- package-lock.json`: if changed, say `npm ci` is needed; do not run it. On backend, the same check for `poetry.lock`: the local stack step restarts the services so their startup installs it inside the containers; never run `poetry install` on the host.
 
@@ -119,14 +134,15 @@ Then follow `~/.agents/skills/cleanup/local-stack.md` with the backend's old and
 
 Then, when chat-ui's checkout moved or the stack has a chat-ui PR, follow `chat-ui-link.md` in this folder: it builds chat-ui and points web (a symlink) and the extension (a copy of the build) at it, without building or running either app. When web or the extension also needs `npm ci`, say the link has to be redone after it (rerun `/spotlight`).
 
-## 4. Final report
+## 5. Final report
 
-Answer first: `<KEY> — removed <n> worktrees; moved <n> main checkouts; <n> refused.` Then one line per repo, including refused repos at their actual final position:
+Answer first: `<KEY> — removed <n> worktrees; moved <n> main checkouts; <n> back in worktrees; <n> refused.` Then one line per repo, including refused repos at their actual final position:
 
 ```
 <repo>: <old branch>@<sha> → <new branch>@<sha>; <lockfile notice or refusal>
 Local database undone: <revisions> → <landing revision> (approved), or none
 Removed: <absolute worktree paths>
+Back in a worktree: <old branch> (#<pr>) → <absolute path>; <setup result>, or none
 Branches deleted: <names, or none; kept by default>
 <the local-stack.md report line>
 <the chat-ui-link.md report line, when it ran>
@@ -134,4 +150,4 @@ Refused / kept: <paths or repos and reasons>
 Not checked: <dependencies, unavailable reads>
 ```
 
-Stop there. Never touch Linear, push, merge, create or edit PRs, repair failing checks, or clean up databases beyond what `local-stack.md` does. This skill changes local checkouts, the removed worktrees, the local docker stack through `local-stack.md`, and the chat-ui links through `chat-ui-link.md`, nothing else.
+Stop there. Never touch Linear, push, merge, create or edit PRs, repair failing checks, or clean up databases beyond what `local-stack.md` does. This skill changes local checkouts, the removed worktrees, the previous spotlight's restored worktrees, the local docker stack through `local-stack.md`, and the chat-ui links through `chat-ui-link.md`, nothing else.
