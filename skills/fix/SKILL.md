@@ -1,6 +1,6 @@
 ---
 name: fix
-description: Get a pull request, or every open PR for a Linear ticket, green and mergeable and keep it there - rebase onto the base when it falls behind, conflicts, or the user asks (regenerating generated files from the rebased tree), fix red CI, and triage and fix red agent evals (a PR's Eval sample, the nightly, or a scenario named by id). Rebases, CI fixes and eval fixes are pushed on their own; it stops to ask only for real calls (a product call, a standing eval red, a conflict it will not guess, a new Linear ticket). It never merges, approves, or enables auto-merge. Use when the user says fix, watch, rebase, bring up to date, catch up with development, "do the same" after a merge, CI is red, Eval sample failed, the nightly is red, or a scenario is flaky.
+description: Get a pull request, or every open PR for a Linear ticket, green and mergeable and keep it there - rebase onto the base when it falls behind, conflicts, or the user asks (regenerating generated files from the rebased tree), fix red CI, and triage and fix red agent evals (the reds a PR's own diff caused in its Eval sample, the nightly, or a scenario named by id). A PR is ready once its required checks pass; the backend's Eval sample is not one of them, so a red sample never holds a PR back. Rebases, CI fixes and eval fixes are pushed on their own; it stops to ask only for real calls (a product call, a standing eval red, a conflict it will not guess, a new Linear ticket). It never merges, approves, or enables auto-merge. Use when the user says fix, watch, rebase, bring up to date, catch up with development, "do the same" after a merge, CI is red, Eval sample failed, the nightly is red, or a scenario is flaky.
 ---
 
 Target: `$ARGUMENTS`.
@@ -29,15 +29,18 @@ Per PR:
 ```
 gh pr view <pr> --json number,title,state,isDraft,headRefName,baseRefName,headRefOid,mergeable,mergeStateStatus,reviewDecision,url
 gh pr checks <pr>
+gh pr checks <pr> --required
 ```
+
+Only required checks decide whether a PR is ready. `--required` is the live list: on the backend's `development` it is Unit, Integration, Markers, Check and the PR title check, and `Eval sample` is not on it. A check that is not required is still read and worked below, but it never holds the ready line, and the loop never waits on one that is still running.
 
 Map it:
 - `state` MERGED or CLOSED: drop it from the loop and report who merged or closed it.
 - `mergeable` CONFLICTING, or `mergeStateStatus` DIRTY or BEHIND, or a rebase was asked for and the PR is not level with its base (`git merge-base --is-ancestor origin/<base> origin/<head>` fails): step 3. A conflicting PR gets no CI at all, and a check that is red only because the branch is stale goes green with the rebase, so rebase before fixing that PR's checks.
-- Any check `fail`: step 4.
-- Any check `pending`: nothing to fix yet; note which are still running and schedule the next tick for when the longest one should finish (Unit on the backend takes about 5 minutes, Eval sample longer). Skipped checks are fine; `Eval sample` skips on purpose when the PR is not eval-relevant.
+- Any check `fail`: step 4, required or not.
+- Any required check `pending`: nothing to fix yet; note which are still running and schedule the next tick for when the longest one should finish (Unit on the backend takes about 5 minutes). A pending `Eval sample` alone is not waited on: the PR can read ready while it runs, and a later tick reads its result. Skipped checks are fine; `Eval sample` skips on purpose when the PR is not eval-relevant.
 - `UNKNOWN` for either field means GitHub is still computing; treat as pending.
-- Everything passed and `mergeStateStatus` is CLEAN: done for that PR. BLOCKED with all checks green means a required review or an unmet rule; report what is missing (`reviewDecision`, required reviewers, a draft flag) and keep watching on the slow interval, since a review can come in.
+- Every required check passed and `mergeStateStatus` is CLEAN, or UNSTABLE (a check that is not required is red or still running): done for that PR. BLOCKED with all required checks green means a required review or an unmet rule; report what is missing (`reviewDecision`, required reviewers, a draft flag) and keep watching on the slow interval, since a review can come in.
 
 A PR that is merely behind, on a repo that does not require up-to-date branches, is left alone unless a rebase was asked for: a rebase restarts CI and draws a new eval slice.
 
@@ -63,7 +66,7 @@ Read the failure, not the summary: `gh run view <run-id> --log-failed` (run id f
 - **Lint, format, type, drift check** (ruff, mypy, prettier, eslint, svelte-check, the str-enum lint, migration head, `openapi-v1.json` drift, prompt goldens drift): reproduce locally in the worktree on the failing files only (backend mypy as `mypy --no-site-packages --follow-imports=silent <files>`, per `Running checks` in `~/.agents/AGENTS.md`), fix or regenerate, commit, push.
 - **Test failure**: reproduce locally, read the test and the code it covers, fix the code. If the test asserts the OLD behaviour and the PR intends the new one, that is the PR author's spec change, not this skill's call: report it with the test name and stop touching that check.
 - **Coverage (codecov/patch)**: add tests for the uncovered lines of the PR's own diff. Never lower a threshold or a baseline.
-- **Eval sample** with one or more regressions in its title: run `evals.md` for those cells (triage, then the fix) alongside the other checks' fixes; then this loop picks the PR back up to see the sample re-run. Flaky-on-retry and known failures in the title are not reds to fix. A title of `no batch produced`, or a regression whose detail says `(run error)`, is an infrastructure failure: re-run once as above, and a second one goes to triage like any red. Never edit a scenario, a judge, `standing_reds.json`, or a golden to get green outside that flow.
+- **Eval sample** with one or more regressions in its title: run `evals.md` in its PR mode for those cells alongside the other checks' fixes. It is not a required check, so the job is only the reds this PR caused: each red cell's failure is read, the cells the diff can reach are measured against `development` and fixed when they are the PR's, and every other red is listed as pre-existing, with no re-run, no standing-red proposal and no Linear write. Flaky-on-retry and known failures in the title are not reds to fix. A title of `no batch produced`, or a regression whose detail says `(run error)`, is an infrastructure failure: re-run once as above so the PR's own reds can be seen, and a second one is reported, not retried. Never edit a scenario, a judge, `standing_reds.json`, or a golden to get green outside that flow.
 
 Fixes go in as their own commit with the repo's commit convention, the message naming the check (e.g. `fix(tests): pin negotiation tier test after rebase`). Run the relevant local check before pushing. All of a tick's fixes go out in one push, eval fixes included: each push restarts 7 to 15 minutes of CI and draws a new eval sample, so never push one fix while you are still working on another in the same tick. Never amend or rewrite the author's commits to hide a fix.
 
@@ -79,7 +82,7 @@ Per tick, one block per PR, short and plain:
 
 ```
 <repo> #<pr> <title> — <state in reader words>
-checks: <n> pass, <n> pending (<names>), <n> fail (<names>)
+checks: <n> pass, <n> pending (<names>), <n> fail (<names>; mark the ones that are not required)
 did: <this tick's changes: rebased onto origin/<base> (<short sha>), <old> → <new>, conflicts and how each was resolved; fix commits; re-runs; or "nothing">
 tested: <what ran locally and the result; what was not run and why>        (only when this tick changed something)
 evals: <the triage or fix line from evals.md>                              (only when evals ran)
@@ -87,4 +90,4 @@ needs you: <a stopped conflict, the main-checkout reset command, an author's spe
 next: <when the next tick is, or "done, ready for you to merge">
 ```
 
-When a PR is green and mergeable, its last line is exactly that: ready for the user to merge. The skill does not merge.
+When a PR's required checks are green and it is mergeable, its last line is exactly that: ready for the user to merge, adding `(Eval sample red: <n> pre-existing, not required)` or `(Eval sample still running, not required)` when that is the case. The skill does not merge.
