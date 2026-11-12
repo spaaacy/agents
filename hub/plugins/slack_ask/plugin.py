@@ -517,7 +517,6 @@ class SlackAsk(Plugin):
             return JobResult(status="failed", error="Slack is not connected")
         if mention.as_user and slack.user_web is None:
             return JobResult(status="failed", error="answering as you in DMs needs the owner's user token")
-        slack.react(mention.channel, mention.ts, "eyes", as_user=mention.as_user)
         engine_name = agent.engine.engine()
         session_ui = self.is_agent_session(mention)
         running = self.running_key(mention.channel, mention.thread_ts)
@@ -533,13 +532,11 @@ class SlackAsk(Plugin):
             if session_ui:
                 self.hub.store.delete_value(self.name, running)
                 self.set_session_status(mention, "active")
-        slack.react(mention.channel, mention.ts, "eyes", remove=True, as_user=mention.as_user)
         outcome = JobResult(engine=result.engine, session=result.session, tokens=result.tokens, cost=result.cost_usd)
         try:
             if result.error:
                 said = "stopped." if result.error == "cancelled" else f"Couldn't answer this one: {result.error}"
                 reply_ts = self.post(mention, said, result.engine)
-                slack.react(mention.channel, mention.ts, "x", as_user=mention.as_user)
                 outcome.status, outcome.error = "failed", result.error
             else:
                 if result.session:
@@ -549,7 +546,6 @@ class SlackAsk(Plugin):
                 reply_ts = self.post(mention, text, result.engine, buttons)
                 if buttons and mention.as_user:
                     self.offer_elsewhere(mention, reply_ts, buttons)
-                slack.react(mention.channel, mention.ts, "white_check_mark", as_user=mention.as_user)
                 first = next((line.strip() for line in text.splitlines() if line.strip()), "")
                 outcome.summary = (first[:197] + "...") if len(first) > 200 else first
             if reply_ts:

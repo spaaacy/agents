@@ -286,7 +286,7 @@ class Handle(unittest.TestCase):
             self.assertIsNone(task.session)
             self.assertIn("You're Codex,", task.system)
             self.assertEqual(task.mcp_servers, ["pg-readonly", "linear", "datadog"])
-            self.assertIn(("add", "white_check_mark"), hub.slack.web.reactions)
+            self.assertEqual(hub.slack.web.reactions, [], "no reactions on the thread")
 
     def test_follow_up_resumes_only_its_own_engines_session(self):
         with tempfile.TemporaryDirectory() as root:
@@ -317,7 +317,7 @@ class Handle(unittest.TestCase):
             result = plugin.handle(self.job(hub, plugin), FakeCtx([agent.AgentResult("claude", error="boom")]))
             self.assertEqual((result.status, result.error), ("failed", "boom"))
             self.assertEqual(hub.slack.web.posts[0]["markdown_text"], "Couldn't answer this one: boom")
-            self.assertIn(("add", "x"), hub.slack.web.reactions)
+            self.assertEqual(hub.slack.web.reactions, [], "no reactions on the thread")
 
     def test_answer_as_owner_is_plain_and_remembered_as_the_bots(self):
         with tempfile.TemporaryDirectory() as root, mock.patch.object(agent.engine, "engine", return_value="codex"):

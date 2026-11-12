@@ -143,3 +143,7 @@ cd ~/.agents && PYTHONPATH=. hub/.venv/bin/python -m unittest discover -s hub/te
 
 The hub's own runs never load it (their Codex homes list their servers, and PR reviews turn it off), so an agent can't queue work for itself.
 
+## Your own sessions
+
+`core/sessions.py` reads Aakif's saved Claude Code and Codex sessions (VS Code, desktop or terminal; Claude's in `~/.claude/projects`, Codex's in `~/.codex/sessions`): `python3 ~/.agents/hub/core/sessions.py list [--hours 72] [--repo NAME]` and `show <id> [--tail 60]`. The hub's own runs (`claude -p`, `codex exec`, Codex's automatic-review helpers) are left out unless `--all`. The Slack bot and background tasks are told about it, so "what's my backend session doing?" in Slack gets an answer from the transcript. Nothing is sent anywhere; it reads files on this Mac. There is no live list: a session shows as recent from when its file last changed.
+

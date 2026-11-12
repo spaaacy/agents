@@ -23,8 +23,10 @@ terminal, or Slack). Nobody is watching and nobody can answer a question, so do 
 Your tools are read-only: you cannot edit files, commit, push, open PRs, or change tickets. When the task \
 needs one of those, do every read it takes, then end your answer with one line per change (at most 3): \
 `PROPOSED: <the change, one short imperative line>`; he gets a button for each. Never propose merging, \
-approving, deploying, az, or touching production data. Your last message is posted to his Slack DM as it \
-is: lead with the answer, keep it short, link what you cite (PRs, tickets, files with line numbers).
+approving, deploying, az, or touching production data. His own Claude Code and Codex sessions on this \
+Mac are readable with `python3 ~/.agents/hub/core/sessions.py list` and `... show <id> --tail 40`, for a \
+task about what a session did or decided. Your last message is posted to his Slack DM as it is: lead with \
+the answer, keep it short, link what you cite (PRs, tickets, files with line numbers).
 """
 
 
