@@ -57,7 +57,8 @@ MAX_CONTEXT_MESSAGES = 60
 MAX_MESSAGE_CHARS = 4_000
 CHANNEL_HISTORY = 15  # messages before a top-level request, for context
 DEFAULT_TRIGGERS = ("@claude",)
-REPLY_MARK = re.compile(r"^🤖 [\w.-]+:")  # an answer posted under the owner's name, by any engine
+REPLY_MARK = re.compile(r"^🤖 [\w.-]+:")  # how answers posted under the owner's name were marked before 2026-11-12
+MINE_KEPT = 500  # answers remembered per conversation
 PROPOSED = re.compile(r"^[ \t>*_-]*PROPOSED:[ \t]*(.+?)[ \t*_]*$", re.MULTILINE)
 MAX_PROPOSALS = 3
 PROPOSAL_NOTE = "This is the action you proposed in the Slack thread above; carry it out."
@@ -169,10 +170,13 @@ def render_text(text: str, names: Callable[[str], str]) -> str:
     return text
 
 
-def reply_detector(mention: Mention, bot_user_id: str | None, owner: str) -> Callable[[dict[str, Any]], bool]:
-    """Recognises the answers already in a conversation: the bot's, or the owner's marked ones (any engine)."""
+def reply_detector(mention: Mention, bot_user_id: str | None, owner: str,
+                   mine: set[str] | frozenset[str] = frozenset()) -> Callable[[dict[str, Any]], bool]:
+    """Recognises the answers already in a conversation: the bot's own, or the ones it posted under the
+    owner's name (their timestamps are remembered in ``mine``; older ones still carry the 🤖 mark)."""
     if mention.as_user:
-        return lambda msg: msg.get("user") == owner and bool(REPLY_MARK.match(str(msg.get("text", ""))))
+        return lambda msg: msg.get("user") == owner and (
+            msg.get("ts") in mine or bool(REPLY_MARK.match(str(msg.get("text", "")))))
     return lambda msg: msg.get("user") == bot_user_id
 
 
@@ -397,8 +401,6 @@ class SlackAsk(Plugin):
         chunks = chunk_reply(text)
         first = None
         for index, chunk in enumerate(chunks):
-            if mention.as_user and index == 0:
-                chunk = reply_prefix(engine_name) + chunk
             if buttons and not mention.as_user and index == len(chunks) - 1:
                 blocks = [{"type": "markdown", "text": chunk}, {"type": "actions", "elements": buttons[:25]}]
                 try:
@@ -415,7 +417,14 @@ class SlackAsk(Plugin):
                 response = client.chat_postMessage(channel=mention.channel, thread_ts=mention.thread_ts,
                                                    markdown_text=chunk, unfurl_links=False)
             first = first or response.get("ts")
+            if mention.as_user and response.get("ts"):
+                self.remember_mine(mention.channel, response["ts"])
         return first
+
+    def remember_mine(self, channel: str, ts: str) -> None:
+        """An answer posted under the owner's name, so the next request knows it was the bot's."""
+        mine = self.get(f"mine:{channel}", [])
+        self.put(f"mine:{channel}", (mine + [ts])[-MINE_KEPT:])
 
     def offer_proposals(self, mention: Mention, proposals: list[str], session: str | None) -> list[dict[str, Any]]:
         """One approve-to-act button per proposed action; tapping runs it in act mode on the thread's session."""
@@ -485,7 +494,8 @@ class SlackAsk(Plugin):
         stored = self.get(self.session_key(mention))
         session = agent.resumable(stored, engine_name)
         conversation = fetch_conversation(slack.client(mention.as_user), mention, slack.bot_dm)
-        is_reply = reply_detector(mention, slack.bot_user_id, self.hub.owner)
+        is_reply = reply_detector(mention, slack.bot_user_id, self.hub.owner,
+                                  set(self.get(f"mine:{mention.channel}", [])))
 
         def prompt(resumed: bool) -> str:
             return build_prompt(mention, conversation, slack.bot_user_id, self.names(), resumed=resumed,

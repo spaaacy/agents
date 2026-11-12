@@ -308,14 +308,20 @@ class Handle(unittest.TestCase):
             self.assertEqual(hub.slack.web.posts[0]["markdown_text"], "Couldn't answer this one: boom")
             self.assertIn(("add", "x"), hub.slack.web.reactions)
 
-    def test_answer_as_owner_carries_the_engines_mark(self):
+    def test_answer_as_owner_is_plain_and_remembered_as_the_bots(self):
         with tempfile.TemporaryDirectory() as root, mock.patch.object(agent.engine, "engine", return_value="codex"):
             user_web = FakeWeb()
             plugin, hub = make_plugin(root, FakeSlack(user_web=user_web))
             job = self.job(hub, plugin, channel="D0OTHER", ts="5.0", thread_ts="5.0", text="summarize", as_user=True)
             plugin.handle(job, FakeCtx([agent.AgentResult("codex", text="here you go")]))
-            self.assertEqual(user_web.posts[0]["markdown_text"], "🤖 codex: here you go")
+            self.assertEqual(user_web.posts[0]["markdown_text"], "here you go")
             self.assertEqual(hub.slack.web.posts, [])
+            mine = set(plugin.get("mine:D0OTHER", []))
+            self.assertTrue(mine)
+            mention = sa.Mention("D0OTHER", "6.0", "5.0", "next", as_user=True)
+            is_reply = sa.reply_detector(mention, "UBOT", OWNER, mine)
+            self.assertTrue(is_reply({"user": OWNER, "ts": next(iter(mine)), "text": "here you go"}))
+            self.assertFalse(is_reply({"user": OWNER, "ts": "7.0", "text": "a real message"}))
 
     def test_no_slack_fails_cleanly(self):
         with tempfile.TemporaryDirectory() as root:
@@ -366,7 +372,7 @@ class Proposals(unittest.TestCase):
             plugin, hub = make_plugin(root, FakeSlack(user_web=user_web))
             job = self.job(hub, channel="D0OTHER", ts="5.0", thread_ts="5.0", text="q", as_user=True)
             plugin.handle(job, FakeCtx([agent.AgentResult("codex", text="ok\nPROPOSED: create a ticket for Y")]))
-            self.assertEqual(user_web.posts[0]["markdown_text"], "🤖 codex: ok")
+            self.assertEqual(user_web.posts[0]["markdown_text"], "ok")
             bot_post = hub.slack.web.posts[0]
             self.assertEqual(bot_post["channel"], BOT_DM)
             self.assertIn("https://slack/D0OTHER/91.0", bot_post["text"])

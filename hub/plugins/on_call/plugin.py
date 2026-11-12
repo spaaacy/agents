@@ -348,7 +348,7 @@ def headline(pages: Sequence[Page]) -> str:
         if page.name not in names:
             names.append(page.name)
     shown = ", ".join(names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else "")
-    return f"📟 datadog paged you at {pacific(pages[0].at)}: {shown}\nlooking into it rn"
+    return f"🐶 datadog paged you at {pacific(pages[0].at)}: {shown}\nlooking into it rn"
 
 
 def report_footer(result: agent.AgentResult) -> str:
@@ -553,7 +553,7 @@ class OnCall(Plugin):
                 # Broadcast: a reply hidden in an hours-old thread was missed (2026-11-10, 10:14 page).
                 self.post(
                     last["channel"],
-                    f"📟 paged again at {pacific(page.at)}: {page.name} ({page.dest}). same monitor as this thread, so no new run",
+                    f"🐶 paged again at {pacific(page.at)}: {page.name} ({page.dest}). same monitor as this thread, so no new run",
                     last["ts"],
                     broadcast=True,
                 )
