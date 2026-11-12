@@ -19,6 +19,7 @@ Datadog client.
 from __future__ import annotations
 
 import argparse
+import re
 import json
 import os
 import subprocess
@@ -362,6 +363,44 @@ def report_footer(result: agent.AgentResult) -> str:
     return "\n\n" + " · ".join(parts) if parts else ""
 
 
+FOLLOWUP_HEADING = re.compile(r"follow[- ]?ups?|next steps", re.IGNORECASE)
+NUMBERED = re.compile(r"^\s*(?:[-*]\s*)?\(?(\d{1,2})[.)]\s+(.+?)\s*$")
+MAX_FOLLOWUP_BUTTONS = 5
+
+
+def parse_followups(report: str) -> list[str]:
+    """The numbered follow-ups the report ends with (the lines after its last follow-ups heading).
+
+    A numbered line starts one; an indented line under it continues it; anything else ends the list.
+    No heading, or no numbered lines after it, means no follow-ups (and so no buttons).
+    """
+    lines = report.splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        if FOLLOWUP_HEADING.search(line) and not NUMBERED.match(line):
+            start = i + 1
+    if start is None:
+        return []
+    items: list[str] = []
+    for line in lines[start:]:
+        match = NUMBERED.match(line)
+        if match:
+            items.append(match.group(2).strip())
+        elif items and line.strip() and line[:1] in " \t":
+            items[-1] += " " + line.strip()
+        elif items and line.strip():
+            break
+    return items
+
+
+def followup_label(n: int, text: str) -> str:
+    """'Do 1: tune the latency monitor' for the button, markdown and links stripped."""
+    plain = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    plain = re.sub(r"[*_`~]", "", plain).strip()
+    label = f"Do {n}: {plain}"
+    return label if len(label) <= 60 else label[:59].rstrip() + "…"
+
+
 def dd_allowed_tools() -> list[str]:
     """The allow-list entries for dd.py, from wherever this folder lives (Claude runs only)."""
     home = str(Path.home())
@@ -623,6 +662,8 @@ class OnCall(Plugin):
             except Exception as exc:  # noqa: BLE001
                 self.log.warning("could not post the report", exc_info=True)
                 post_error = f"could not post the report to Slack: {type(exc).__name__}: {exc}"
+        if thread and not result.error and post_error is None:
+            self.offer_followups(thread, result, task.env)
         first_line = next((line.strip() for line in body.splitlines() if line.strip()), "")
         delivered = not post or thread is not None and post_error is None
         return JobResult(
@@ -636,6 +677,29 @@ class OnCall(Plugin):
             cost=result.cost_usd,
             extra={"report": result.text, "headline": text, "resume": result.resume_command()},
         )
+
+    def offer_followups(self, thread: tuple[str, str], result: agent.AgentResult, env: dict[str, str]) -> str | None:
+        """One "Do n" button per follow-up the report lists (at most five), posted under the report.
+
+        A tap runs that follow-up in act mode (Plugin.run_agent_action), resuming this investigation's
+        session with the same Datadog keys. The report stays its own message so its markdown renders.
+        """
+        followups = parse_followups(result.text)[:MAX_FOLLOWUP_BUTTONS]
+        if not followups or not result.session or getattr(self.hub, "actions", None) is None:
+            return None
+        buttons = [
+            self.offer("agent", followup_label(n, line), {
+                "instruction": f"{line}\n\nCarry out follow-up {n} from your on-call report above.",
+                "session": result.session, "env": dict(env)}, confirm=line)
+            for n, line in enumerate(followups, 1)
+        ]
+        text = "Tap a follow-up to have the agent do it (it can open draft PRs and tickets; it never merges):"
+        try:
+            return self.hub.slack.post_markdown(thread[0], text, thread[1],
+                                                blocks=self.hub.actions.blocks(text, buttons))[0]
+        except Exception:  # noqa: BLE001 - the report is already posted; the buttons are extra
+            self.log.warning("could not post the follow-up buttons", exc_info=True)
+            return None
 
     # ------------------------------------------------------------------ dashboard, checks, terminal
 

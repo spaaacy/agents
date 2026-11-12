@@ -398,3 +398,100 @@ class EnvFile(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+REPORT_WITH_FOLLOWUPS = """real: the latency monitor fired on a deploy spike, cleared in 4m
+
+Follow-ups:
+1. Tune `p2-api-latency` with /tune-monitor: widen the window to 10m
+2. Draft a ticket for the slow **carrier search** query
+   (the one behind [the trace](https://x/y))
+3. Start the incident report
+"""
+
+
+class FollowupParsing(unittest.TestCase):
+    def test_numbered_lines_after_the_heading_with_continuations(self) -> None:
+        items = oc.parse_followups(REPORT_WITH_FOLLOWUPS)
+        self.assertEqual(len(items), 3)
+        self.assertIn("(the one behind", items[1])
+        self.assertTrue(items[0].startswith("Tune `p2-api-latency`"))
+
+    def test_numbered_findings_without_a_heading_are_not_follow_ups(self) -> None:
+        self.assertEqual(oc.parse_followups("1. a finding\n2. another"), [])
+        self.assertEqual(oc.parse_followups("Follow-ups: none needed, it cleared."), [])
+
+    def test_the_last_heading_wins_and_the_list_stops_at_prose(self) -> None:
+        text = "Next steps for you:\n1. old\n\nmore prose\n\n**Follow-ups**\n1. new one\nprose after"
+        self.assertEqual(oc.parse_followups(text), ["new one"])
+
+    def test_labels_are_plain_and_short(self) -> None:
+        label = oc.followup_label(2, "Draft a ticket for the slow **carrier search** query [trace](https://x) " * 3)
+        self.assertTrue(label.startswith("Do 2: Draft a ticket for the slow carrier search"))
+        self.assertLessEqual(len(label), 60)
+        self.assertNotIn("*", label)
+
+
+class FakeActions:
+    def __init__(self) -> None:
+        self.offered: list[tuple] = []
+
+    def button(self, plugin: str, name: str, label: str, args: dict, *, style=None, confirm=None) -> dict:
+        self.offered.append((plugin, name, label, args, confirm))
+        return {"type": "button", "action_id": f"act:{len(self.offered)}", "value": str(len(self.offered))}
+
+    @staticmethod
+    def blocks(text: str, buttons: list) -> list:
+        return [{"type": "section", "text": {"type": "mrkdwn", "text": text}}, {"type": "actions", "elements": buttons}]
+
+
+class MarkdownSlack(FakeSlack):
+    def post_markdown(self, channel: str, text: str, thread_ts: str | None = None, *, as_user: bool = False,
+                      blocks: list | None = None) -> list[str]:
+        payload = {"channel": channel, "text": text, "thread_ts": thread_ts, "blocks": blocks}
+        return [self.api.chat_postMessage(**payload)["ts"]]
+
+
+class FollowupButtons(Handle):
+    def setUp(self) -> None:
+        super().setUp()
+        self.slack = MarkdownSlack()
+        self.hub.slack = self.slack
+        self.hub.actions = FakeActions()
+
+    def test_each_follow_up_gets_a_button_that_resumes_the_session_with_the_keys(self) -> None:
+        with mock.patch.dict("os.environ", {"DD_API_KEY": "k-api", "DD_APP_KEY": "k-app"}):
+            result = self.plugin.investigate([page("a", 5)], self.run_agent(text=REPORT_WITH_FOLLOWUPS))
+        self.assertEqual(result.status, "done")
+        headline, report, buttons = self.posts()
+        self.assertIn("Follow-ups:", report["markdown_text"])  # the report keeps its own markdown message
+        self.assertEqual(buttons["thread_ts"], "ts1")
+        self.assertEqual(len(buttons["blocks"][1]["elements"]), 3)
+        plugin, name, label, args, confirm = self.hub.actions.offered[0]
+        self.assertEqual((plugin, name), ("on_call", "agent"))
+        self.assertTrue(label.startswith("Do 1: Tune p2-api-latency"))
+        self.assertEqual(args["session"], "claude:s1")
+        self.assertEqual(args["env"], {"DD_API_KEY": "k-api", "DD_APP_KEY": "k-app"})
+        self.assertIn("Carry out follow-up 1", args["instruction"])
+        self.assertIn("/tune-monitor", confirm)
+
+    def test_no_follow_ups_or_a_failed_run_means_no_buttons(self) -> None:
+        self.plugin.investigate([page("a", 5)], self.run_agent(text="real: cleared, nothing to do"))
+        self.plugin.investigate([page("b", 6)], self.run_agent(error="boom"))
+        self.assertEqual(self.hub.actions.offered, [])
+
+    def test_a_tapped_follow_up_runs_as_an_approved_agent_action(self) -> None:
+        self.engine_name = "codex"  # the session it resumes is a Codex one
+        job = mock.Mock(payload={"reply": {"channel": "D1", "thread_ts": "ts1"}})
+        seen: list[agent.AgentTask] = []
+        ctx = mock.Mock()
+        ctx.run_agent.side_effect = lambda task: seen.append(task) or agent.AgentResult(
+            "codex", "opened the draft PR https://github.com/x/pull/1", session="codex:s9")
+        out = self.plugin.act("agent", {"instruction": "Tune it", "session": "codex:s1", "env": {"DD_API_KEY": "k"}},
+                              job, ctx)
+        self.assertEqual(out.status, "done")
+        task = seen[0]
+        self.assertEqual((task.mode, task.session, task.env), ("act", "codex:s1", {"DD_API_KEY": "k"}))
+        self.assertTrue(task.prompt.startswith(agent.ACT_PREAMBLE))
+        self.assertTrue(task.prompt.endswith("Tune it"))
+        self.assertIn("opened the draft PR", self.posts()[-1]["text"])

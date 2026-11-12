@@ -16,6 +16,21 @@ Each Slack thread maps to one agent session (kept tagged with its engine), so a
 follow-up in the thread resumes that conversation; a thread the other engine
 started is answered fresh. The plugin, not the model, posts the answer, so the
 model never holds a Slack write tool.
+
+Approve-to-act: an answer may end with up to three `PROPOSED: <action>` lines
+(the agent is told when). They are stripped from the posted answer and become
+buttons (hub.core.actions); tapping one runs that action in the hub's act mode,
+resuming the thread's session, and the thread then continues from the action's
+session. Answers the bot posts carry the buttons; answers posted under the
+owner's name get them in a follow-up from the bot in its own DM, because a
+message posted with a user token is the owner's, and Slack's docs don't say it
+would route a tap back to this app.
+
+Slack's agent surface (the manifest's "agent_view"): in the bot's own DM each
+request is an agent session. While a job runs the session is "processing"
+(Slack's loading state with a stop button), then "active" again; the stop
+button (the agent_session_stopped event) cancels the job. Slack shows no custom
+progress text for sessions, so there is no live "reading the PR…" line.
 """
 from __future__ import annotations
 
@@ -43,6 +58,9 @@ MAX_MESSAGE_CHARS = 4_000
 CHANNEL_HISTORY = 15  # messages before a top-level request, for context
 DEFAULT_TRIGGERS = ("@claude",)
 REPLY_MARK = re.compile(r"^🤖 [\w.-]+:")  # an answer posted under the owner's name, by any engine
+PROPOSED = re.compile(r"^[ \t>*_-]*PROPOSED:[ \t]*(.+?)[ \t*_]*$", re.MULTILINE)
+MAX_PROPOSALS = 3
+PROPOSAL_NOTE = "This is the action you proposed in the Slack thread above; carry it out."
 
 
 def reply_prefix(engine_name: str) -> str:
@@ -217,6 +235,18 @@ def chunk_reply(text: str, limit: int = MAX_REPLY_CHARS) -> list[str]:
     return chunks
 
 
+def split_proposals(text: str) -> tuple[str, list[str]]:
+    """The answer without its `PROPOSED:` lines, and the first three proposed actions, in order."""
+    proposals = [m.group(1).strip() for m in PROPOSED.finditer(text) if m.group(1).strip()][:MAX_PROPOSALS]
+    clean = PROPOSED.sub("", text)
+    clean = re.sub(r"\n{3,}", "\n\n", clean).strip()
+    return clean, proposals
+
+
+def button_label(action: str, limit: int = 70) -> str:
+    return action if len(action) <= limit else action[: limit - 1].rstrip() + "…"
+
+
 def title_for(text: str, bot_user_id: str | None = None) -> str:
     line = " ".join(strip_bot_mention(text, bot_user_id).split())
     return (line[:77] + "...") if len(line) > 80 else (line or "(mention only)")
@@ -270,6 +300,7 @@ class SlackAsk(Plugin):
     def __init__(self, hub: Any, config: dict[str, Any]) -> None:
         super().__init__(hub, config)
         self._names: Names | None = None
+        self._session_status_ok: bool | None = None  # did Slack take the last agents.sessions.setStatus
 
     # ------------------------------------------------------------------ settings
 
@@ -299,6 +330,7 @@ class SlackAsk(Plugin):
         self.migrate_sessions()
         if self.slack is not None:
             self.slack.subscribe(self.on_event)
+            self.slack.subscribe(self.on_session_stopped)
 
     def migrate_sessions(self, path: Path | None = None) -> int:
         """Once: the old bot's thread sessions, so follow-ups in old threads still resume."""
@@ -353,17 +385,100 @@ class SlackAsk(Plugin):
             engine=engine_name,
         )
 
-    def post(self, mention: Mention, text: str, engine_name: str) -> str | None:
-        """Post an answer in the request's thread; the first message's ts."""
+    def post(self, mention: Mention, text: str, engine_name: str,
+             buttons: list[dict[str, Any]] | None = None) -> str | None:
+        """Post an answer in the request's thread; the first message's ts.
+
+        Buttons ride the last message when the bot posts it (a markdown block, so the answer reads exactly
+        as markdown_text would, then the buttons); an answer posted as the owner gets them from the bot in
+        its DM instead (offer_elsewhere).
+        """
         client = self.slack.client(mention.as_user)
+        chunks = chunk_reply(text)
         first = None
-        for index, chunk in enumerate(chunk_reply(text)):
+        for index, chunk in enumerate(chunks):
             if mention.as_user and index == 0:
                 chunk = reply_prefix(engine_name) + chunk
-            response = client.chat_postMessage(channel=mention.channel, thread_ts=mention.thread_ts,
-                                               markdown_text=chunk, unfurl_links=False)
+            if buttons and not mention.as_user and index == len(chunks) - 1:
+                blocks = [{"type": "markdown", "text": chunk}, {"type": "actions", "elements": buttons[:25]}]
+                try:
+                    response = client.chat_postMessage(channel=mention.channel, thread_ts=mention.thread_ts,
+                                                       text=chunk[:3000], blocks=blocks, unfurl_links=False)
+                except Exception:  # noqa: BLE001 - a workspace without markdown blocks: answer, then the buttons
+                    self.log.warning("posting the answer with its buttons failed; posting them apart", exc_info=True)
+                    response = client.chat_postMessage(channel=mention.channel, thread_ts=mention.thread_ts,
+                                                       markdown_text=chunk, unfurl_links=False)
+                    note = "Proposed:"
+                    client.chat_postMessage(channel=mention.channel, thread_ts=mention.thread_ts, text=note,
+                                            blocks=self.hub.actions.blocks(note, buttons), unfurl_links=False)
+            else:
+                response = client.chat_postMessage(channel=mention.channel, thread_ts=mention.thread_ts,
+                                                   markdown_text=chunk, unfurl_links=False)
             first = first or response.get("ts")
         return first
+
+    def offer_proposals(self, mention: Mention, proposals: list[str], session: str | None) -> list[dict[str, Any]]:
+        """One approve-to-act button per proposed action; tapping runs it in act mode on the thread's session."""
+        return [
+            self.offer("agent", button_label(action),
+                       {"instruction": f"{action}\n\n{PROPOSAL_NOTE}", "session": session,
+                        "session_key": self.session_key(mention)},
+                       confirm=action)
+            for action in proposals
+        ]
+
+    def offer_elsewhere(self, mention: Mention, answer_ts: str | None, buttons: list[dict[str, Any]]) -> None:
+        """Buttons for an answer posted as the owner: a message from the bot in its DM, linking the answer."""
+        slack = self.slack
+        if not buttons or not slack.bot_dm:
+            return
+        link = slack.permalink(mention.channel, answer_ts, as_user=True) if answer_ts else None
+        text = f"Proposed in <{link}|your answer>:" if link else "Proposed in an answer posted as you:"
+        slack.post_markdown(slack.bot_dm, text, None, blocks=self.hub.actions.blocks(text, buttons))
+
+    def act(self, name: str, args: dict[str, Any], job: Job, ctx: JobContext) -> JobResult:
+        """An approved action; afterwards the thread continues from the action's session."""
+        result = super().act(name, args, job, ctx)
+        key = args.get("session_key")
+        if name == "agent" and key and result.session:
+            self.put(key, result.session)
+        return result
+
+    # ------------------------------------------------------------------ Slack's agent sessions (agent_view)
+
+    def is_agent_session(self, mention: Mention) -> bool:
+        """A request in the bot's own DM: with the manifest's agent_view on, Slack shows it as an agent session."""
+        return not mention.as_user and self.slack is not None and mention.channel == self.slack.bot_dm
+
+    def set_session_status(self, mention: Mention, status: str, title: str | None = None) -> bool:
+        """agents.sessions.setStatus on the request's thread; False when Slack refuses (no agent_view, plan)."""
+        body: dict[str, Any] = {"channel_id": mention.channel, "thread_ts": mention.thread_ts, "status": status}
+        if title:
+            body["title"] = title[:200]
+        try:
+            response = self.slack.web.api_call("agents.sessions.setStatus", json=body)
+            ok = bool(response.get("ok", True)) if isinstance(response, dict) else True
+        except Exception as exc:  # noqa: BLE001 - the answer never depends on the loading state
+            self.log.debug("agents.sessions.setStatus %s failed: %s", status, exc)
+            ok = False
+        self._session_status_ok = ok
+        return ok
+
+    def running_key(self, channel: str, thread_ts: str) -> str:
+        return f"running:{channel}:{thread_ts}"
+
+    def on_session_stopped(self, event: dict[str, Any]) -> None:
+        """The stop button on an agent session: cancel the job answering that thread."""
+        if event.get("type") != "agent_session_stopped" or event.get("user") != self.hub.owner:
+            return
+        channel, thread_ts = event.get("channel"), event.get("thread_ts")
+        if not channel or not thread_ts:
+            return
+        job_id = self.get(self.running_key(channel, thread_ts))
+        if job_id:
+            self.log.info("stop button: cancelling %s", job_id)
+            self.hub.scheduler.cancel(job_id)
+        self.set_session_status(Mention(channel, thread_ts, thread_ts, ""), "active")
 
     def answer(self, mention: Mention, ctx: JobContext, engine_name: str) -> agent.AgentResult:
         slack = self.slack
@@ -391,24 +506,38 @@ class SlackAsk(Plugin):
             return JobResult(status="failed", error="answering as you in DMs needs the owner's user token")
         slack.react(mention.channel, mention.ts, "eyes", as_user=mention.as_user)
         engine_name = agent.engine.engine()
+        session_ui = self.is_agent_session(mention)
+        running = self.running_key(mention.channel, mention.thread_ts)
+        if session_ui:
+            self.put(running, job.id)
+            self.set_session_status(mention, "processing", title_for(mention.text, slack.bot_user_id))
         try:
             result = self.answer(mention, ctx, engine_name)
         except Exception as exc:  # noqa: BLE001 - every failure is reported in the thread
             self.log.exception("answering %s failed", job.id)
             result = agent.AgentResult(engine_name, error=f"{type(exc).__name__}: {exc}")
+        finally:
+            if session_ui:
+                self.hub.store.delete_value(self.name, running)
+                self.set_session_status(mention, "active")
         slack.react(mention.channel, mention.ts, "eyes", remove=True, as_user=mention.as_user)
         outcome = JobResult(engine=result.engine, session=result.session, tokens=result.tokens, cost=result.cost_usd)
         try:
             if result.error:
-                reply_ts = self.post(mention, f"Couldn't answer this one: {result.error}", result.engine)
+                said = "stopped." if result.error == "cancelled" else f"Couldn't answer this one: {result.error}"
+                reply_ts = self.post(mention, said, result.engine)
                 slack.react(mention.channel, mention.ts, "x", as_user=mention.as_user)
                 outcome.status, outcome.error = "failed", result.error
             else:
                 if result.session:
                     self.put(self.session_key(mention), result.session)
-                reply_ts = self.post(mention, result.text, result.engine)
+                text, proposals = split_proposals(result.text)
+                buttons = self.offer_proposals(mention, proposals, result.session) if proposals else []
+                reply_ts = self.post(mention, text, result.engine, buttons)
+                if buttons and mention.as_user:
+                    self.offer_elsewhere(mention, reply_ts, buttons)
                 slack.react(mention.channel, mention.ts, "white_check_mark", as_user=mention.as_user)
-                first = next((line.strip() for line in result.text.splitlines() if line.strip()), "")
+                first = next((line.strip() for line in text.splitlines() if line.strip()), "")
                 outcome.summary = (first[:197] + "...") if len(first) > 200 else first
             if reply_ts:
                 outcome.link = slack.permalink(mention.channel, reply_ts, as_user=mention.as_user)
@@ -424,7 +553,8 @@ class SlackAsk(Plugin):
         if slack is None:
             return {"connected": False}
         return {"connected": slack.connected, "bot": slack.bot_name, "answers_as_you_in_dms": slack.dm_as_user,
-                "triggers": self.triggers()}
+                "triggers": self.triggers(),
+                "agent_sessions": {None: "not tried yet", True: "on", False: "refused by Slack"}[self._session_status_ok]}
 
     def checks(self) -> list[Check]:
         slack = self.slack

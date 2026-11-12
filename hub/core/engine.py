@@ -37,9 +37,12 @@ from typing import Any
 HERE = Path(__file__).resolve().parent
 STATE = Path.home() / ".agents" / "state"
 CHOICE_FILE = STATE / "engine.json"
-CODEX_HOME = STATE / "codex-home"
+CODEX_HOME = STATE / "codex-home"          # read-only runs
+ACT_CODEX_HOME = STATE / "codex-home-act"  # runs Aakif approved with a button: may write where allowed
 USER_CODEX_HOME = Path(os.environ.get("CODEX_HOME_INTERACTIVE", Path.home() / ".codex"))
 RULES_FILE = HERE / "background.rules"
+ACT_RULES_FILE = HERE / "act.rules"
+AGENTS_MD = Path.home() / ".agents" / "AGENTS.md"
 CODEX = os.environ.get("CODEX_BIN", str(Path.home() / ".local" / "bin" / "codex"))
 CLAUDE = os.environ.get("CLAUDE_BIN", str(Path.home() / ".local" / "bin" / "claude"))
 
@@ -79,6 +82,8 @@ LINEAR_READ_TOOLS = [
     "get_team", "list_teams", "list_issue_statuses", "list_issue_labels", "get_attachment",
     "extract_images", "get_status_updates",
 ]
+# Linear's writes an approved run may make: tickets and comments (the AGENTS.md rules on tickets still apply).
+LINEAR_WRITE_TOOLS = ["save_issue", "save_comment"]
 # MCP tools an unattended run may call without asking (nobody is there to approve one). All are reads.
 APPROVED_MCP_TOOLS = {
     "pg-readonly": ["connection_info", "describe_table", "find_entity", "list_tables", "run_sql",
@@ -282,8 +287,8 @@ def _table(name: str, values: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def mcp_servers(names: list[str], user_config: Path | None = None) -> dict[str, dict[str, Any]]:
-    """The named MCP servers from the interactive Codex config, read-only where they can write."""
+def mcp_servers(names: list[str], user_config: Path | None = None, *, act: bool = False) -> dict[str, dict[str, Any]]:
+    """The named MCP servers from the interactive Codex config: read-only, or with Linear's writes for an approved run."""
     path = user_config or USER_CODEX_HOME / "config.toml"
     try:
         found = tomllib.loads(path.read_text()).get("mcp_servers", {})
@@ -297,17 +302,19 @@ def mcp_servers(names: list[str], user_config: Path | None = None) -> dict[str, 
         # Per-tool approvals (Linear's save_issue is approved interactively) never carry over.
         server = {k: v for k, v in server.items() if k != "tools"}
         if name == "linear":
-            server["enabled_tools"] = LINEAR_READ_TOOLS
+            server["enabled_tools"] = LINEAR_READ_TOOLS + (LINEAR_WRITE_TOOLS if act else [])
         if name in APPROVED_MCP_TOOLS:
-            server["tools"] = {tool: {"approval_mode": "approve"} for tool in APPROVED_MCP_TOOLS[name]}
+            approved = APPROVED_MCP_TOOLS[name] + (LINEAR_WRITE_TOOLS if act and name == "linear" else [])
+            server["tools"] = {tool: {"approval_mode": "approve"} for tool in approved}
         if name in READ_ONLY_MCP_SERVERS:
             server["default_tools_approval_mode"] = "approve"
         servers[name] = server
     return servers
 
 
-def codex_config(choice: dict[str, Any], servers: dict[str, dict[str, Any]]) -> str:
-    """config.toml for the unattended Codex home."""
+def codex_config(choice: dict[str, Any], servers: dict[str, dict[str, Any]],
+                 write_dirs: list[Path] | None = None) -> str:
+    """config.toml for an unattended Codex home: read-only, or (``write_dirs`` given) writable there only."""
     top = {
         "model": choice["codex"]["model"],
         "model_reasoning_effort": choice["codex"]["effort"],
@@ -323,7 +330,8 @@ def codex_config(choice: dict[str, Any], servers: dict[str, dict[str, Any]]) -> 
         # The runners hand some runs keys (on-call's Datadog keys); keep them in the commands' environment.
         _table("shell_environment_policy", {"inherit": "all", "ignore_default_excludes": True}),
         _table("permissions.background.filesystem",
-               {":root": "read", **{str(p): "none" for p in HIDDEN_PATHS}}),
+               {":root": "read", **{str(p): "write" for p in write_dirs}} if write_dirs is not None
+               else {":root": "read", **{str(p): "none" for p in HIDDEN_PATHS}}),
         _table("permissions.background.network", {"enabled": True}),
     ]
     for name, server in servers.items():
@@ -349,27 +357,67 @@ def _link(target: Path, link: Path) -> None:
     link.symlink_to(target)
 
 
-def prepare_codex_home(mcp_names: list[str] | None = None, home: Path = CODEX_HOME,
-                       choice: dict[str, Any] | None = None) -> Path:
-    """Build (or refresh) the unattended Codex home and return it, for CODEX_HOME."""
+def default_write_dirs(repos: list[str] | None = None) -> list[Path]:
+    """Where an approved run may write: the skills' worktrees, each repo's git data (worktrees and commits
+    live there), the temp folder and the hub's caches. Never a main checkout's files."""
+    dirs = [Path.home() / "dev" / ".claude" / "worktrees", Path(os.environ.get("TMPDIR", "/tmp")).resolve(),
+            Path("/private/tmp"),
+            # Tools' caches: commit hooks (pre-commit, ruff), npm and pip/poetry write there.
+            Path.home() / ".cache", Path.home() / ".npm", Path.home() / "Library" / "Caches"]
+    for repo in repos or []:
+        git_dir = Path(repo).expanduser() / ".git"
+        if git_dir.is_dir():
+            dirs.append(git_dir)
+    for directory in dirs:
+        if not directory.exists() and str(directory).startswith(str(Path.home())):
+            directory.mkdir(parents=True, exist_ok=True)
+    return dirs
+
+
+def prepare_codex_home(mcp_names: list[str] | None = None, home: Path | None = None,
+                       choice: dict[str, Any] | None = None, *, act: bool = False,
+                       write_dirs: list[Path] | None = None) -> Path:
+    """Build (or refresh) an unattended Codex home and return it, for CODEX_HOME.
+
+    The read-only home is for every ordinary run. ``act=True`` builds the home
+    for a run Aakif approved with a button: it may write in ``write_dirs``,
+    push, open PRs and write Linear tickets, reads his AGENTS.md, and its own
+    rules (act.rules) still refuse merging, approving, force-pushing and az.
+    """
     choice = choice or current()
+    home = home or (ACT_CODEX_HOME if act else CODEX_HOME)
+    rules = ACT_RULES_FILE if act else RULES_FILE
     home.mkdir(parents=True, exist_ok=True)
     (home / "rules").mkdir(exist_ok=True)
     (USER_CODEX_HOME / "sessions").mkdir(parents=True, exist_ok=True)
     _link(USER_CODEX_HOME / "auth.json", home / "auth.json")
-    # One session store, so `codex resume <id>` on the laptop finds these runs.
+    # One session store, so `codex resume <id>` on the laptop finds these runs (and an approved run can
+    # pick up the read-only session that proposed it).
     _link(USER_CODEX_HOME / "sessions", home / "sessions")
+    if act and AGENTS_MD.exists():
+        _link(AGENTS_MD, home / "AGENTS.md")  # his rules for tickets, migrations, PRs
     for stale in (home / "rules").glob("*.rules"):
-        if stale.name != RULES_FILE.name:
+        if stale.name != rules.name:
             stale.unlink()
-    shutil.copyfile(RULES_FILE, home / "rules" / RULES_FILE.name)
+    shutil.copyfile(rules, home / "rules" / rules.name)
     config = home / "config.toml"
     # Two runs can prepare the home at once; each writes its own temporary file.
     tmp = config.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
-    tmp.write_text(codex_config(choice, mcp_servers(mcp_names or [])))
+    tmp.write_text(codex_config(choice, mcp_servers(mcp_names or [], act=act),
+                                (write_dirs or default_write_dirs()) if act else None))
     tmp.chmod(0o600)  # it carries MCP keys copied from the interactive config
     tmp.replace(config)
     return home
+
+
+GIT_HOOKS = HERE / "git-hooks"
+
+
+def act_git_env() -> dict[str, str]:
+    """Git settings for an approved action's commands: its hooks go through git-hooks/, whose pre-push
+    refuses a force-push or a branch delete however the push is typed, then runs the repo's own hooks.
+    (A push with --no-verify skips every hook; act.rules and the instructions are what stop that.)"""
+    return {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.hooksPath", "GIT_CONFIG_VALUE_0": str(GIT_HOOKS)}
 
 
 def codex_env(home: Path, extra: dict[str, str] | None = None) -> dict[str, str]:

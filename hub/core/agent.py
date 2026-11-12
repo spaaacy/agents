@@ -40,7 +40,7 @@ class AgentTask:
     system: str = ""                      # instructions: Claude's appended system prompt, Codex's preamble
     session: str | None = None            # tagged session id to resume
     schema: dict[str, Any] | None = None  # a structured final answer
-    mode: str = "read-only"               # "read-only" or "review"
+    mode: str = "read-only"               # "read-only", "review" (a throwaway checkout) or "act" (an approved action)
     timeout: int = 900
     run_dir: Path | None = None           # events.jsonl and scratch files go here
     env: dict[str, str] = field(default_factory=dict)  # extra environment for the agent's commands
@@ -49,6 +49,8 @@ class AgentTask:
     claude_allowed_tools: list[str] = field(default_factory=list)
     claude_settings: Path | None = None
     engine: str | None = None             # pin an engine; default is the switch's choice
+    write_dirs: list[str] = field(default_factory=list)  # act mode: more folders it may write in
+    repos: list[str] = field(default_factory=list)        # act mode: checkouts whose git data it may write
 
 
 @dataclass
@@ -214,8 +216,9 @@ def run_claude(task: AgentTask, cancel: threading.Event | None = None, execute: 
             final.update(event)
 
     try:
+        git_env = engine.act_git_env() if task.mode == "act" else {}
         code, stderr = execute(claude_command(task, session_id, mcp_path), task.prompt, task.cwd, task.timeout,
-                               on_line, {**os.environ, **task.env}, cancel)
+                               on_line, {**os.environ, **git_env, **task.env}, cancel)
     except subprocess.TimeoutExpired:
         return AgentResult("claude", session=task.session, error=f"Claude did not finish within {task.timeout} seconds")
     except InterruptedError:
@@ -277,6 +280,11 @@ def run_codex(task: AgentTask, cancel: threading.Event | None = None, execute: E
     if task.mode == "review":
         cmd = codex_review_command(task, output, schema_path, session_id)
         env = {**os.environ, **task.env}
+    elif task.mode == "act":
+        writable = engine.default_write_dirs(task.repos) + [run_dir] + [Path(d).expanduser() for d in task.write_dirs]
+        home = engine.prepare_codex_home(task.mcp_servers, act=True, write_dirs=writable)
+        cmd = engine.codex_command(task.cwd, output, session=session_id, schema=schema_path)
+        env = engine.codex_env(home, {**engine.act_git_env(), **task.env})
     else:
         home = engine.prepare_codex_home(task.mcp_servers)
         cmd = engine.codex_command(task.cwd, output, session=session_id, schema=schema_path)
@@ -319,6 +327,27 @@ def run_codex(task: AgentTask, cancel: threading.Event | None = None, execute: E
 
 
 RUNNERS: dict[str, Callable[..., AgentResult]] = {"claude": run_claude, "codex": run_codex}
+
+# An approved action on Claude: its deny list (act-claude-settings.json) still refuses merging, approving,
+# force-pushing and az; this allow list lets it edit, commit, push and open PRs, and write Linear tickets.
+ACT_CLAUDE_SETTINGS = Path(__file__).resolve().parent / "act-claude-settings.json"
+ACT_CLAUDE_TOOLS = [
+    "Read", "Grep", "Glob", "Edit", "Write", "MultiEdit",
+    "Bash(git *)", "Bash(gh pr view *)", "Bash(gh pr diff *)", "Bash(gh pr list *)", "Bash(gh pr checks *)",
+    "Bash(gh pr create *)", "Bash(gh pr edit *)", "Bash(gh pr comment *)", "Bash(gh run view *)", "Bash(gh run list *)",
+    "Bash(gh issue view *)", "Bash(gh search *)", "Bash(python3 *)", "Bash(poetry run *)",
+    "Bash(ENVIRONMENT=test poetry run *)", "Bash(npx *)", "Bash(npm run *)", "Bash(rg *)", "Bash(ls *)",
+    "Bash(cat *)", "Bash(head *)", "Bash(tail *)", "Bash(wc *)", "Bash(grep *)", "Bash(mkdir *)",
+    "mcp__claude_ai_Linear", "mcp__pg-readonly", "mcp__context7", "mcp__plugin_datadog_mcp",
+]
+ACT_PREAMBLE = """Aakif tapped a button in Slack approving exactly the action below, and nothing more. Nobody is watching this run and nobody can answer a question, so do the action, then report.
+- Work in a worktree under ~/dev/.claude/worktrees (create one from origin when you need to change a repo); main checkouts are not writable here. Follow ~/.agents/AGENTS.md and the repo's CLAUDE.md.
+- You may commit, push a branch and open a draft PR, and create or update Linear tickets and comments when the action calls for it (a ticket is assigned to Aakif and follows AGENTS.md's ticket rules).
+- Never merge, approve, close a PR, force-push, delete a branch, run az, or do anything the action did not ask for. If the action turns out to need one of those, or a product decision, stop and say so.
+- Your last message is posted back in Slack as it is: what you did, with links (PR, ticket), in a few lines.
+
+The action:
+"""
 
 
 def run(task: AgentTask, cancel: threading.Event | None = None) -> AgentResult:

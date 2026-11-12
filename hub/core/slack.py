@@ -152,6 +152,23 @@ class SlackService:
         response = self.client(as_user).chat_postMessage(**kwargs)
         return response.get("ts")
 
+    def post_markdown(self, channel: str, text: str, thread_ts: str | None = None, *, as_user: bool = False,
+                      blocks: list[dict[str, Any]] | None = None) -> list[str]:
+        """Post standard markdown (Slack renders headings, lists, code), split under its 12,000-character
+        limit; with ``blocks`` it is one Block Kit message instead. Returns the posted timestamps."""
+        if blocks is not None:
+            response = self.client(as_user).chat_postMessage(channel=channel, text=text[:3000], blocks=blocks,
+                                                             thread_ts=thread_ts, unfurl_links=False)
+            return [response.get("ts")]
+        stamps, rest = [], text.strip() or "(empty)"
+        while rest:
+            cut = len(rest) if len(rest) <= 11000 else (rest.rfind("\n\n", 0, 11000) if rest.rfind("\n\n", 0, 11000) > 0 else 11000)
+            response = self.client(as_user).chat_postMessage(channel=channel, markdown_text=rest[:cut],
+                                                             thread_ts=thread_ts, unfurl_links=False)
+            stamps.append(response.get("ts"))
+            rest = rest[cut:].lstrip()
+        return stamps
+
     def permalink(self, channel: str, ts: str, *, as_user: bool = False) -> str | None:
         try:
             return self.client(as_user).chat_getPermalink(channel=channel, message_ts=ts).get("permalink")

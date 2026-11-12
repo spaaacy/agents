@@ -6,7 +6,9 @@ from pathlib import Path
 from unittest import mock
 
 from hub.core import agent
-from hub.core.store import Store
+from hub.core.actions import Actions
+from hub.core.plugin import Plugin
+from hub.core.store import JobResult, Store
 from hub.plugins.slack_ask import plugin as sa
 from hub.plugins.slack_ask.prompts import system_prompt
 
@@ -41,6 +43,17 @@ class FakeWeb:
     def chat_getPermalink(self, channel, message_ts):
         return {"permalink": f"https://slack/{channel}/{message_ts}"}
 
+    calls: list = None
+    refuse: bool = False
+
+    def api_call(self, method, json=None):
+        if self.calls is None:
+            self.calls = []
+        self.calls.append((method, json))
+        if self.refuse:
+            raise RuntimeError("not_allowed")
+        return {"ok": True}
+
 
 class FakeSlack:
     def __init__(self, bot_name="claude-aakif", user_web=None):
@@ -70,6 +83,10 @@ class FakeSlack:
     def token(self, kind):
         return None
 
+    def post_markdown(self, channel, text, thread_ts=None, *, as_user=False, blocks=None):
+        response = self.client(as_user).chat_postMessage(channel=channel, text=text, blocks=blocks, thread_ts=thread_ts)
+        return [response["ts"]]
+
 
 class FakeHub:
     def __init__(self, root, slack=None):
@@ -80,6 +97,9 @@ class FakeHub:
         self.store = Store(Path(root) / "hub.sqlite3")
         self.slack = slack
         self.stopping = threading.Event()
+        self.plugins = {}
+        self.actions = Actions(self)
+        self.scheduler = mock.Mock()
 
     def wake(self):
         pass
@@ -303,6 +323,134 @@ class Handle(unittest.TestCase):
             hub.slack = None
             result = plugin.handle(self.job(hub, plugin), FakeCtx([]))
             self.assertEqual(result.status, "failed")
+
+
+class Proposals(unittest.TestCase):
+    def test_lines_are_stripped_and_capped_at_three(self):
+        text = "do X\n\nPROPOSED: open a PR\n- PROPOSED: comment on #1\nPROPOSED: a\nPROPOSED: b\n"
+        clean, proposals = sa.split_proposals(text)
+        self.assertEqual(clean, "do X")
+        self.assertEqual(proposals, ["open a PR", "comment on #1", "a"])
+        self.assertEqual(sa.split_proposals("nothing to do"), ("nothing to do", []))
+
+    def test_both_prompts_explain_proposals(self):
+        for name in ("codex", "claude"):
+            self.assertIn("PROPOSED:", system_prompt(name))
+
+    def job(self, hub, **payload):
+        base = {"channel": "C1", "ts": "105.0", "thread_ts": "100.0", "text": f"<@{BOT}> q", "as_user": False}
+        base.update(payload)
+        return hub.store.enqueue("slack_ask", "q", base)
+
+    def test_bot_answer_carries_one_button_per_proposal(self):
+        with tempfile.TemporaryDirectory() as root, mock.patch.object(agent.engine, "engine", return_value="codex"):
+            plugin, hub = make_plugin(root)
+            ctx = FakeCtx([agent.AgentResult("codex", text="fix it\nPROPOSED: open a PR in envoyai-web fixing the filter",
+                                             session="codex:t1")])
+            result = plugin.handle(self.job(hub), ctx)
+            self.assertEqual(result.summary, "fix it")
+            posted = hub.slack.web.posts[0]
+            self.assertEqual(posted["blocks"][0], {"type": "markdown", "text": "fix it"})
+            button = posted["blocks"][1]["elements"][0]
+            self.assertEqual(button["text"]["text"], "open a PR in envoyai-web fixing the filter")
+            self.assertIn("confirm", button)
+            record = hub.store.get_value("actions", button["value"])
+            self.assertEqual((record["plugin"], record["name"]), ("slack_ask", "agent"))
+            self.assertEqual(record["args"]["session"], "codex:t1")
+            self.assertEqual(record["args"]["session_key"], "session:C1:100.0")
+            self.assertIn(sa.PROPOSAL_NOTE, record["args"]["instruction"])
+
+    def test_answer_as_owner_gets_its_buttons_from_the_bot_in_its_dm(self):
+        with tempfile.TemporaryDirectory() as root, mock.patch.object(agent.engine, "engine", return_value="codex"):
+            user_web = FakeWeb()
+            plugin, hub = make_plugin(root, FakeSlack(user_web=user_web))
+            job = self.job(hub, channel="D0OTHER", ts="5.0", thread_ts="5.0", text="q", as_user=True)
+            plugin.handle(job, FakeCtx([agent.AgentResult("codex", text="ok\nPROPOSED: create a ticket for Y")]))
+            self.assertEqual(user_web.posts[0]["markdown_text"], "🤖 codex: ok")
+            bot_post = hub.slack.web.posts[0]
+            self.assertEqual(bot_post["channel"], BOT_DM)
+            self.assertIn("https://slack/D0OTHER/91.0", bot_post["text"])
+            self.assertEqual(bot_post["blocks"][-1]["type"], "actions")
+
+    def test_the_thread_continues_from_the_actions_session(self):
+        with tempfile.TemporaryDirectory() as root:
+            plugin, hub = make_plugin(root)
+            plugin.put("session:C1:100.0", "codex:answer")
+            done = JobResult(status="done", session="codex:action")
+            with mock.patch.object(Plugin, "run_agent_action", return_value=done) as run:
+                plugin.act("agent", {"instruction": "x", "session": "codex:answer", "session_key": "session:C1:100.0"},
+                           mock.Mock(), mock.Mock())
+            run.assert_called_once()
+            self.assertEqual(plugin.get("session:C1:100.0"), "codex:action")
+
+
+class AgentSessions(unittest.TestCase):
+    def job(self, hub, **payload):
+        base = {"channel": BOT_DM, "ts": "200.0", "thread_ts": "200.0", "text": "what's on fire?", "as_user": False}
+        base.update(payload)
+        return hub.store.enqueue("slack_ask", "q", base)
+
+    def test_bot_dm_request_is_a_processing_session_then_active(self):
+        with tempfile.TemporaryDirectory() as root, mock.patch.object(agent.engine, "engine", return_value="codex"):
+            plugin, hub = make_plugin(root)
+            seen = {}
+
+            class Ctx(FakeCtx):
+                def run_agent(inner, task):
+                    seen["running"] = plugin.get(plugin.running_key(BOT_DM, "200.0"))
+                    return super().run_agent(task)
+
+            job = self.job(hub)
+            plugin.handle(job, Ctx([agent.AgentResult("codex", text="all quiet")]))
+            calls = hub.slack.web.calls
+            self.assertEqual([c[1]["status"] for c in calls], ["processing", "active"])
+            self.assertEqual(calls[0][0], "agents.sessions.setStatus")
+            self.assertEqual((calls[0][1]["channel_id"], calls[0][1]["thread_ts"]), (BOT_DM, "200.0"))
+            self.assertEqual(seen["running"], job.id)
+            self.assertIsNone(plugin.get(plugin.running_key(BOT_DM, "200.0")))
+            self.assertEqual(plugin.status()["agent_sessions"], "on")
+
+    def test_channel_mentions_are_not_sessions(self):
+        with tempfile.TemporaryDirectory() as root, mock.patch.object(agent.engine, "engine", return_value="codex"):
+            plugin, hub = make_plugin(root)
+            plugin.handle(self.job(hub, channel="C1", thread_ts="100.0", text=f"<@{BOT}> q"),
+                          FakeCtx([agent.AgentResult("codex", text="ok")]))
+            self.assertIsNone(hub.slack.web.calls)
+
+    def test_slack_refusing_sessions_never_blocks_the_answer(self):
+        with tempfile.TemporaryDirectory() as root, mock.patch.object(agent.engine, "engine", return_value="codex"):
+            plugin, hub = make_plugin(root)
+            hub.slack.web.refuse = True
+            result = plugin.handle(self.job(hub), FakeCtx([agent.AgentResult("codex", text="ok")]))
+            self.assertEqual(result.status, "done")
+            self.assertEqual(plugin.status()["agent_sessions"], "refused by Slack")
+
+    def test_stop_button_cancels_the_threads_job(self):
+        with tempfile.TemporaryDirectory() as root:
+            plugin, hub = make_plugin(root)
+            plugin.put(plugin.running_key(BOT_DM, "200.0"), "1112-abc")
+            plugin.on_session_stopped({"type": "agent_session_stopped", "user": "U0SOMEONE", "channel": BOT_DM,
+                                       "thread_ts": "200.0"})
+            hub.scheduler.cancel.assert_not_called()
+            plugin.on_session_stopped({"type": "agent_session_stopped", "user": OWNER, "channel": BOT_DM,
+                                       "thread_ts": "200.0"})
+            hub.scheduler.cancel.assert_called_once_with("1112-abc")
+            self.assertEqual(hub.slack.web.calls[-1][1]["status"], "active")
+
+    def test_a_stopped_answer_says_so(self):
+        with tempfile.TemporaryDirectory() as root, mock.patch.object(agent.engine, "engine", return_value="codex"):
+            plugin, hub = make_plugin(root)
+            plugin.handle(self.job(hub), FakeCtx([agent.AgentResult("codex", error="cancelled")]))
+            self.assertEqual(hub.slack.web.posts[0]["markdown_text"], "stopped.")
+
+    def test_manifest_turns_on_the_agent_view(self):
+        manifest = json.loads((Path(sa.__file__).parent / "slack-app-manifest.json").read_text())
+        view = manifest["features"]["agent_view"]
+        self.assertLessEqual(len(view["agent_description"]), 300)
+        self.assertLessEqual(len(view["suggested_prompts"]), 4)
+        self.assertIn("assistant:write", manifest["oauth_config"]["scopes"]["bot"])
+        events = manifest["settings"]["event_subscriptions"]["bot_events"]
+        self.assertTrue({"agent_session_stopped", "app_home_opened", "message.im", "app_mention"} <= set(events))
 
 
 if __name__ == "__main__":

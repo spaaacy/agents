@@ -281,6 +281,8 @@ class PrReview(Plugin):
             if not force_draft:
                 ctx.note("posting, if posting is on")
                 await domain.publish(cfg, db, db.execute("SELECT * FROM jobs WHERE key=?", (key,)).fetchone())
+                if db.execute("SELECT status FROM jobs WHERE key=?", (key,)).fetchone()["status"] == "drafted":
+                    self.offer_draft(pr, key, directory)  # posting isn't on: ask with buttons instead
             with db:
                 db.execute("UPDATE requests SET status='done' WHERE id=?", (request["id"],))
             LOG.info("Review ready: %s", directory / "draft.md")
@@ -320,6 +322,85 @@ class PrReview(Plugin):
             if session:
                 extra["resume_command"] = resume_command(checkout, session)
             return JobResult("failed", error=str(error)[:500], session=session, extra=extra)
+
+    # ------------------------------------------------------------------ approve-to-act: post or skip a draft
+
+    def offer_draft(self, pr: dict[str, Any], key: str, directory: Path) -> str | None:
+        """DM the owner a drafted review with "Post this review" and "Skip"; the draft itself goes in the thread.
+
+        Only when posting isn't on (draft mode, or post mode without the standing authorization): the tap
+        authorizes that one review. Returns the DM message's ts, or None when Slack can't be reached.
+        """
+        slack = self.hub.slack
+        if slack is None or slack.web is None or not slack.bot_dm:
+            return None
+        name = f"{pr['base']['repo']['full_name']}#{pr['number']}"
+        text = (f"Review draft for <{pr['html_url']}|{name}> at `{pr['head']['sha'][:12]}`: posting isn't on, "
+                "so it's waiting on you. The draft is in the thread.")
+        buttons = [
+            self.offer("post", "Post this review", {"review_key": key, "pr": name, "url": pr["html_url"]},
+                       style="primary", confirm=f"Post this review on {name} as one GitHub comment review?"),
+            self.offer("skip", "Skip", {"review_key": key, "pr": name, "url": pr["html_url"]}),
+        ]
+        try:
+            ts = slack.post_markdown(slack.bot_dm, text, blocks=self.hub.actions.blocks(text, buttons))[0]
+            draft = directory / "draft.md"
+            if draft.exists():
+                slack.post_markdown(slack.bot_dm, draft.read_text(), ts)
+            return ts
+        except Exception:  # noqa: BLE001 - the draft stays on disk and in the dashboard either way
+            self.log.warning("could not DM the review draft", exc_info=True)
+            return None
+
+    def act(self, name: str, args: dict[str, Any], job: Job, ctx: JobContext) -> JobResult:
+        if name in ("post", "skip"):
+            return asyncio.run(self._act_on_draft(name, args, job))
+        return super().act(name, args, job, ctx)
+
+    async def _act_on_draft(self, name: str, args: dict[str, Any], job: Job) -> JobResult:
+        cfg = self.domain_cfg()
+        db = self.db()
+        pr = args.get("pr") or "the PR"
+        try:
+            row = db.execute("SELECT * FROM jobs WHERE key=?", (args.get("review_key"),)).fetchone()
+            if row is None:
+                outcome = JobResult("failed", error=f"no saved review for {pr} any more")
+            elif row["status"] != "drafted":
+                done = {"posted": "already posted", "skipped": "already skipped", "superseded": "the PR changed since"}
+                outcome = JobResult("done", summary=f"{pr}: {done.get(row['status'], row['status'])}, nothing to do",
+                                    link=row["review_url"] or args.get("url"))
+            elif name == "skip":
+                domain.update_job(db, row["key"], "skipped")
+                outcome = JobResult("done", summary=f"{pr}: draft skipped, not posted", link=args.get("url"))
+            else:
+                try:
+                    await domain.publish(cfg, db, row, approved=True)
+                except Exception as error:  # noqa: BLE001 - publish leaves the row uncertain when unsure
+                    LOG.exception("posting the approved review failed")
+                    outcome = JobResult("failed", error=f"{type(error).__name__}: {error}"[:500], link=args.get("url"))
+                else:
+                    after = db.execute("SELECT * FROM jobs WHERE key=?", (row["key"],)).fetchone()
+                    if after["status"] == "posted":
+                        outcome = JobResult("done", summary=f"{pr}: review posted", link=after["review_url"])
+                    elif after["status"] == "superseded":
+                        outcome = JobResult("done", summary=f"{pr}: not posted, the PR changed or closed since the review",
+                                            link=args.get("url"))
+                    else:
+                        outcome = JobResult("failed", error=after["error"] or f"not posted ({after['status']})",
+                                            link=args.get("url"))
+        finally:
+            db.close()
+        reply = job.payload.get("reply") or {}
+        slack = self.hub.slack
+        if reply.get("channel") and slack is not None and slack.web is not None:
+            line = outcome.summary or f"Couldn't post it: {outcome.error}"
+            if outcome.link and outcome.link not in line:
+                line += f"\n{outcome.link}"
+            try:
+                slack.post(reply["channel"], line, reply.get("thread_ts"))
+            except Exception:  # noqa: BLE001
+                self.log.warning("could not reply in the thread", exc_info=True)
+        return outcome
 
     # ------------------------------------------------------------------ dashboard, checks, commands
 

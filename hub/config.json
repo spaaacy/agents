@@ -30,11 +30,31 @@
     "mcp_servers": [
       "pg-readonly",
       "context7"
+    ],
+    "repos": [
+      "~/dev/envoyai-backend",
+      "~/dev/envoyai-web",
+      "~/dev/envoyai-chrome-plugin",
+      "~/dev/envoyai-chat-ui",
+      "~/dev/ci-workflows",
+      "~/.agents"
     ]
   },
   "plugins": {
-    "on_call": {"class": "hub.plugins.on_call.plugin:OnCall"},
-    "slack_ask": {"class": "hub.plugins.slack_ask.plugin:SlackAsk"},
-    "pr_review": {"class": "hub.plugins.pr_review.plugin:PrReview"}
+    "on_call": {
+      "class": "hub.plugins.on_call.plugin:OnCall"
+    },
+    "slack_ask": {
+      "class": "hub.plugins.slack_ask.plugin:SlackAsk"
+    },
+    "pr_review": {
+      "class": "hub.plugins.pr_review.plugin:PrReview"
+    },
+    "linear_sweep": {
+      "class": "hub.plugins.linear_sweep.plugin:LinearSweep"
+    }
+  },
+  "power": {
+    "stay_awake_on_charger": true
   }
 }

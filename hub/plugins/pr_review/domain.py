@@ -468,8 +468,16 @@ async def finish_review(pr, checkout, directory, key):
     return payload
 
 
-async def publish(cfg, db, job):
-    if not setting(db, "enabled_at") or setting(db, "mode") != "post" or not setting(db, "posting_authorized_at"):
+async def publish(cfg, db, job, *, approved: bool = False):
+    """Post a drafted review as one GitHub COMMENT review, with every guard.
+
+    ``approved`` is Aakif's tap on "Post this review" for this one review: it
+    stands in for post mode and the standing posting authorization, and nothing
+    else (head and base recheck, the marker check, the account check, and an
+    unconfirmed post never being retried all still apply).
+    """
+    if not approved and (not setting(db, "enabled_at") or setting(db, "mode") != "post"
+                         or not setting(db, "posting_authorized_at")):
         return
     existing = await existing_review(cfg, job)
     if existing:
@@ -489,7 +497,7 @@ async def publish(cfg, db, job):
     payload = json.loads(payload_path.read_text())
     if payload.get("event") != "COMMENT" or payload.get("commit_id") != job["head"]:
         raise RuntimeError("Invalid saved posting payload")
-    if not setting(db, "enabled_at") or not setting(db, "posting_authorized_at"):
+    if not approved and (not setting(db, "enabled_at") or not setting(db, "posting_authorized_at")):
         return
     update_job(db, job["key"], "posting")
     try:

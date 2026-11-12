@@ -89,6 +89,45 @@ class Plugin:
         """`agents check` lines: tokens, sign-ins, CLIs. Posts nothing."""
         return []
 
+    def act(self, name: str, args: dict[str, Any], job: Job, ctx: JobContext) -> JobResult:
+        """Run an action the owner approved with a button (actions.py). "agent" works for every plugin:
+        an agent in act mode does ``args["instruction"]``, resuming ``args["session"]`` when given."""
+        if name == "agent":
+            return self.run_agent_action(args, job, ctx)
+        raise NotImplementedError(f"{self.name} has no action {name!r}")
+
+    def run_agent_action(self, args: dict[str, Any], job: Job, ctx: JobContext) -> JobResult:
+        cfg = self.hub.cfg.get("agent", {})
+        task = agent.AgentTask(
+            prompt=agent.ACT_PREAMBLE + str(args.get("instruction", "")).strip(),
+            cwd=Path(args.get("cwd") or cfg.get("workdir", "~/dev/envoyai-backend")).expanduser(),
+            session=agent.resumable(args.get("session")), mode="act", timeout=int(args.get("timeout", 2700)),
+            mcp_servers=list(cfg.get("mcp_servers", [])) + ["linear", "datadog"],
+            add_dirs=list(cfg.get("add_dirs", [])), repos=list(cfg.get("repos", [])),
+            claude_allowed_tools=agent.ACT_CLAUDE_TOOLS, claude_settings=agent.ACT_CLAUDE_SETTINGS,
+            env=dict(args.get("env") or {}),
+        )
+        ctx.note("doing it…")
+        result = ctx.run_agent(task)
+        reply = job.payload.get("reply") or {}
+        text = result.text if not result.error else f"Couldn't finish that: {result.error}"
+        resume = result.resume_command()
+        if resume:
+            text += f"\n\n_to pick it up on the laptop:_ `{resume}`"
+        link = None
+        if reply.get("channel") and self.hub.slack is not None:
+            posted = self.hub.slack.post_markdown(reply["channel"], text, reply.get("thread_ts"))
+            link = self.hub.slack.permalink(reply["channel"], posted[0]) if posted else None
+        first = next((line for line in result.text.splitlines() if line.strip()), "") if result.text else ""
+        return JobResult(status="failed" if result.error else "done", summary=first[:300] or None, link=link,
+                         error=result.error, engine=result.engine, session=result.session, tokens=result.tokens,
+                         cost=result.cost_usd)
+
+    def offer(self, name: str, label: str, args: dict[str, Any] | None = None, *, style: str | None = None,
+              confirm: str | None = None) -> dict[str, Any]:
+        """A Slack button that runs action ``name`` of this plugin when the owner taps it."""
+        return self.hub.actions.button(self.name, name, label, args, style=style, confirm=confirm)
+
     def commands(self) -> dict[str, Callable[[list[str]], str]]:
         """Extra control commands (Slack `!<name> <cmd>` and the dashboard), each returning a reply line."""
         return {}

@@ -275,6 +275,7 @@ class Handle(unittest.TestCase):
         self.addCleanup(old.stop)
         self.hub = Hub(HUB_CFG, state_dir=self.root / 'hub', with_slack=False)
         self.plugin = self.hub.plugins['pr_review']
+        self.plugin.config['reviews_dir'] = str(self.root / 'reviews')  # never the real cache
         db = self.plugin.db()
         with db:
             domain.put_setting(db, 'enabled_at', '1')
@@ -303,7 +304,10 @@ class Handle(unittest.TestCase):
             return directory / 'checkout'
 
         async def fake_finish(pr, checkout, directory, key):
-            return domain.review_payload(json.loads((directory / 'draft.json').read_text()), '', pr['head']['sha'], key)
+            payload = domain.review_payload(json.loads((directory / 'draft.json').read_text()), '', pr['head']['sha'], key)
+            (directory / 'payload.json').write_text(json.dumps(payload))
+            (directory / 'draft.md').write_text('Summary\n' + payload['body'] + '\n')  # as the real one writes
+            return payload
 
         with patch.object(domain, 'github', new_callable=AsyncMock, return_value=PR_JSON), \
              patch.object(domain, 'prepare', side_effect=fake_prepare), \
@@ -512,3 +516,129 @@ class Migration(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class FakeActions:
+    def __init__(self):
+        self.offered = []
+
+    def button(self, plugin, name, label, args, *, style=None, confirm=None):
+        self.offered.append((plugin, name, label, args, style, confirm))
+        return {'type': 'button', 'action_id': f'act:{name}', 'value': name}
+
+    @staticmethod
+    def blocks(text, buttons):
+        return [{'type': 'section', 'text': {'type': 'mrkdwn', 'text': text}}, {'type': 'actions', 'elements': buttons}]
+
+
+class FakeSlack:
+    web = object()
+    bot_dm = 'D1'
+
+    def __init__(self):
+        self.posts = []
+
+    def post_markdown(self, channel, text, thread_ts=None, *, as_user=False, blocks=None):
+        self.posts.append({'channel': channel, 'text': text, 'thread_ts': thread_ts, 'blocks': blocks})
+        return [f'ts{len(self.posts)}']
+
+    def post(self, channel, text, thread_ts=None, **kw):
+        self.posts.append({'channel': channel, 'text': text, 'thread_ts': thread_ts})
+        return f'ts{len(self.posts)}'
+
+
+class DraftButtons(Handle):
+    def setUp(self):
+        super().setUp()
+        self.hub.slack = FakeSlack()
+        self.hub.actions = FakeActions()
+
+    def drafted(self):
+        first = agent.AgentResult('codex', text='the review', session='codex:s1')
+        second = agent.AgentResult('codex', text=json.dumps(DRAFT), session='codex:s1', structured=DRAFT)
+        outcome, _, _ = self.run_handle(self.job(), [first, second])
+        return outcome
+
+    def test_draft_mode_dms_the_draft_with_post_and_skip(self):
+        outcome = self.drafted()
+        self.assertEqual(outcome.extra['review_status'], 'drafted')
+        headline, draft = self.hub.slack.posts
+        self.assertEqual((headline['channel'], headline['thread_ts']), ('D1', None))
+        self.assertIn('envoy-ai/envoyai-backend#2909', headline['text'])
+        self.assertEqual(draft['thread_ts'], 'ts1')
+        self.assertIn('Looks good, two nits.', draft['text'])
+        names = [(o[1], o[2], o[4]) for o in self.hub.actions.offered]
+        self.assertEqual(names, [('post', 'Post this review', 'primary'), ('skip', 'Skip', None)])
+        self.assertEqual(self.hub.actions.offered[0][3]['review_key'], outcome.extra['review_key'])
+        self.assertIn('envoy-ai/envoyai-backend#2909', self.hub.actions.offered[0][5])
+
+    def test_post_mode_with_authorization_offers_nothing(self):
+        db = self.plugin.db()
+        with db:
+            domain.put_setting(db, 'mode', 'post')
+            domain.put_setting(db, 'posting_authorized_at', '1')
+        db.close()
+
+        async def posts(cfg, db, job, approved=False):
+            domain.update_job(db, job['key'], 'posted', review_url='https://github.com/r/1')
+
+        first = agent.AgentResult('codex', text='the review', session='codex:s1')
+        second = agent.AgentResult('codex', text=json.dumps(DRAFT), session='codex:s1', structured=DRAFT)
+        self.run_handle(self.job(), [first, second], publish=posts)
+        self.assertEqual((self.hub.slack.posts, self.hub.actions.offered), ([], []))
+
+    def tap(self, name, key):
+        job = Job(id='j', plugin='pr_review', title='t', priority=35, status='running', created=0,
+                  payload={'action': name, 'args': {'review_key': key, 'pr': 'repo#2909', 'url': A},
+                           'reply': {'channel': 'D1', 'thread_ts': 'ts1'}})
+        return self.plugin.act(name, job.payload['args'], job, None)
+
+    def test_post_goes_through_publish_with_the_one_review_approval(self):
+        key = self.drafted().extra['review_key']
+        calls = []
+
+        async def fake_publish(cfg, db, job, approved=False):
+            calls.append((job['key'], approved))
+            domain.update_job(db, job['key'], 'posted', review_url='https://github.com/r/9')
+
+        with patch.object(domain, 'publish', side_effect=fake_publish):
+            out = self.tap('post', key)
+        self.assertEqual(calls, [(key, True)])
+        self.assertEqual((out.status, out.link), ('done', 'https://github.com/r/9'))
+        self.assertIn('review posted', self.hub.slack.posts[-1]['text'])
+        with patch.object(domain, 'publish', side_effect=fake_publish):
+            again = self.tap('post', key)
+        self.assertIn('already posted', again.summary)
+        self.assertEqual(len(calls), 1)
+
+    def test_post_keeps_every_publish_guard(self):
+        key = self.drafted().extra['review_key']
+        changed = dict(PR_JSON, head={'sha': 'x' * 40})
+        with patch.object(domain, 'github', new_callable=AsyncMock, return_value=changed), \
+             patch.object(domain, 'existing_review', new_callable=AsyncMock, return_value=None):
+            out = self.tap('post', key)
+        self.assertIn('PR changed', out.summary)
+        self.assertEqual(self.domain_rows()[0][0]['status'], 'superseded')
+
+    def test_skip_marks_the_draft_and_posts_nothing(self):
+        key = self.drafted().extra['review_key']
+        with patch.object(domain, 'publish', new_callable=AsyncMock) as pub:
+            out = self.tap('skip', key)
+        pub.assert_not_called()
+        self.assertIn('skipped', out.summary)
+        self.assertEqual(self.domain_rows()[0][0]['status'], 'skipped')
+
+
+class ApprovedPublish(Publishing):
+    async def test_an_approved_post_skips_only_the_mode_and_authorization_checks(self):
+        with self.db:
+            domain.put_setting(self.db, 'mode', 'draft')
+            self.db.execute("DELETE FROM settings WHERE key='posting_authorized_at'")
+        responses = [None, {'state': 'open', 'head': {'sha': 'head'}, 'base': {'sha': 'base'}},
+                     {'login': 'spaaacy'}, {'html_url': 'https://github.com/r/5'}]
+        with patch.object(domain, 'existing_review', new_callable=AsyncMock, return_value=None), \
+             patch.object(domain, 'github', new_callable=AsyncMock, side_effect=responses[1:]):
+            await domain.publish(CFG, self.db, self.job())
+            self.assertEqual(self.job()['status'], 'drafted')  # not approved: draft mode still blocks
+            await domain.publish(CFG, self.db, self.job(), approved=True)
+        self.assertEqual((self.job()['status'], self.job()['review_url']), ('posted', 'https://github.com/r/5'))

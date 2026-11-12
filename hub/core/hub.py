@@ -12,6 +12,7 @@ import importlib
 import json
 import logging
 import os
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -53,6 +54,9 @@ class Hub:
         self.owner = self.cfg["owner"]["slack_user_id"]
         self.slack = SlackService(self.cfg.get("slack", {}), self.owner) if with_slack else None
         self.scheduler = Scheduler(self, int(self.cfg.get("scheduler", {}).get("slots", 2)))
+        from .actions import Actions
+
+        self.actions = Actions(self)
         self.listeners: list[Callable[[dict[str, Any]], None]] = []
         self.plugins: dict[str, Plugin] = {}
         self.broken: dict[str, str] = {}  # plugins that failed to load, and why; the rest still run
@@ -84,6 +88,8 @@ class Hub:
             log.warning("job %s (%s) was interrupted by the last stop; marked failed", job.id, job.plugin)
         if self.slack is not None and not self.slack.start():
             log.error("Slack is not connected: %s. Plugins that need it will report so.", self.slack.error)
+        self.actions.start()
+        self.stay_awake()
         for plugin in self.plugins.values():
             try:
                 plugin.start()
@@ -113,6 +119,19 @@ class Hub:
         if self.slack.web is None and not self.slack.connect_web():
             return None
         return self.slack
+
+    def stay_awake(self) -> None:
+        """Keep the Mac from sleeping while it is on the charger, for as long as the hub runs (`caffeinate -s`
+        lasts only on AC power and ends with this process). Closing the lid still sleeps it unless an
+        external display keeps it open."""
+        if not self.cfg.get("power", {}).get("stay_awake_on_charger", True):
+            return
+        try:
+            subprocess.Popen(["caffeinate", "-s", "-w", str(os.getpid())], stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
+            log.info("keeping the Mac awake while it is on the charger")
+        except OSError:
+            log.warning("caffeinate is unavailable; the Mac may sleep while the hub runs")
 
     def wake(self) -> None:
         self.scheduler.wakeup.set()

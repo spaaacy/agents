@@ -70,7 +70,11 @@ class Scheduler:
         started = time.time()
         log.info("running %s (%s): %s", job.id, job.plugin, job.title)
         try:
-            result = plugin.handle(job, JobContext(self.hub, plugin, job, run_dir, cancel))
+            ctx = JobContext(self.hub, plugin, job, run_dir, cancel)
+            if job.payload.get("action"):  # a button the owner tapped (actions.py)
+                result = plugin.act(job.payload["action"], job.payload.get("args") or {}, job, ctx)
+            else:
+                result = plugin.handle(job, ctx)
             if not isinstance(result, JobResult):
                 result = JobResult(status="failed", error=f"{job.plugin} returned {type(result).__name__}, not a JobResult")
         except Exception as exc:  # noqa: BLE001 - a job's failure is recorded, never fatal

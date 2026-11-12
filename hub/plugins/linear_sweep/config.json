@@ -1,0 +1,12 @@
+{
+  "poll_seconds": 600,
+  "daily_at": "09:30",
+  "timeout_seconds": 1800,
+  "repos": [
+    "envoy-ai/envoyai-backend",
+    "envoy-ai/envoyai-web",
+    "envoy-ai/envoyai-chrome-plugin"
+  ],
+  "branches": ["staging", "production"],
+  "gh": "/opt/homebrew/bin/gh"
+}

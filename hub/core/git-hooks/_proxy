@@ -1,0 +1,37 @@
+#!/bin/bash
+# Git hooks for the hub's approved actions (act mode), set with core.hooksPath for their runs only.
+# Every hook name links here. pre-push first refuses a force-push or a branch delete, however the push
+# was typed; then, for every hook, the repo's own hook runs as it would without us.
+name="$(basename "$0")"
+common="$(git rev-parse --git-common-dir 2>/dev/null)"
+own="$(git config --file "$common/config" --get core.hooksPath 2>/dev/null || true)"
+[ -n "$own" ] || own="$common/hooks"
+case "$own" in /*) ;; *) own="$(git rev-parse --show-toplevel)/$own" ;; esac
+
+if [ "$name" = "pre-push" ]; then
+  input="$(cat)"
+  zero="0000000000000000000000000000000000000000"
+  while read -r local_ref local_sha remote_ref remote_sha; do
+    [ -n "$local_ref" ] || continue
+    if [ "$local_sha" = "$zero" ]; then
+      echo "refused by the agents hub: an approved action never deletes a remote branch ($remote_ref)" >&2
+      exit 1
+    fi
+    if [ "$remote_sha" != "$zero" ]; then
+      if ! git cat-file -e "$remote_sha^{commit}" 2>/dev/null || ! git merge-base --is-ancestor "$remote_sha" "$local_sha"; then
+        echo "refused by the agents hub: pushing $local_ref to $remote_ref would rewrite it (a force-push); fetch and build on top instead" >&2
+        exit 1
+      fi
+    fi
+  done <<< "$input"
+  if [ -x "$own/pre-push" ]; then
+    printf '%s\n' "$input" | "$own/pre-push" "$@"
+    exit $?
+  fi
+  exit 0
+fi
+
+if [ -x "$own/$name" ]; then
+  exec "$own/$name" "$@"
+fi
+exit 0

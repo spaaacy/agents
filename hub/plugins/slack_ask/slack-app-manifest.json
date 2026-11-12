@@ -11,6 +11,27 @@
             "messages_tab_read_only_enabled": false,
             "agent_tasks_enabled": true
         },
+        "agent_view": {
+            "agent_description": "Aakif's agent on his Mac (Codex or Claude): answers questions about Envoy's code, PRs, Linear, Datadog and the read-only database, and runs actions only when he taps a button.",
+            "suggested_prompts": [
+                {
+                    "title": "What's on fire?",
+                    "message": "what's firing in datadog right now, and does any of it need me?"
+                },
+                {
+                    "title": "My open PRs",
+                    "message": "what's the state of my open PRs: CI, reviews, anything blocking?"
+                },
+                {
+                    "title": "What shipped?",
+                    "message": "what shipped to production today?"
+                },
+                {
+                    "title": "Hub status",
+                    "message": "!status"
+                }
+            ]
+        },
         "bot_user": {
             "display_name": "Aakif's Dot",
             "always_online": false
@@ -33,7 +54,8 @@
                 "im:history",
                 "mpim:history",
                 "users:read",
-                "im:write"
+                "im:write",
+                "assistant:write"
             ]
         },
         "pkce_enabled": false
@@ -45,6 +67,7 @@
                 "message.mpim"
             ],
             "bot_events": [
+                "agent_session_stopped",
                 "app_home_opened",
                 "app_mention",
                 "message.im"
