@@ -262,6 +262,12 @@ class Store:
             db.execute("INSERT INTO kv VALUES (?,?,?) ON CONFLICT(scope,key) DO UPDATE SET value=excluded.value",
                        (scope, key, json.dumps(value)))
 
+    def values(self, scope: str) -> dict[str, Any]:
+        """Every key in a scope (a plugin's reminders, say)."""
+        with self._db() as db:
+            rows = db.execute("SELECT key, value FROM kv WHERE scope=? ORDER BY key", (scope,)).fetchall()
+        return {r["key"]: json.loads(r["value"]) for r in rows}
+
     def delete_value(self, scope: str, key: str) -> None:
         with self._db() as db:
             db.execute("DELETE FROM kv WHERE scope=? AND key=?", (scope, key))

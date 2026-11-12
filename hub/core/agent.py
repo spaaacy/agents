@@ -252,7 +252,9 @@ def codex_review_command(task: AgentTask, output: Path, schema: Path | None, ses
     choice = engine.current()["codex"]
     cmd = [engine.CODEX, "exec", "--approve-for-me", "--json", "--color", "never",
            "-m", choice["model"], "-c", f'model_reasoning_effort="{choice["effort"]}"',
-           "-c", "sandbox_workspace_write.network_access=true"]
+           "-c", "sandbox_workspace_write.network_access=true",
+           # His own sessions' line to the hub; a review must not queue tasks or ping him through it.
+           "-c", "mcp_servers.agents-hub.enabled=false"]
     if session_id:
         cmd += ["resume"]
     else:

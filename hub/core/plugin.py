@@ -132,6 +132,11 @@ class Plugin:
         """Extra control commands (Slack `!<name> <cmd>` and the dashboard), each returning a reply line."""
         return {}
 
+    def aliases(self) -> dict[str, Callable[[list[str]], str]]:
+        """Top-level control commands this plugin answers (`!remind ...` rather than `!reminders remind ...`);
+        they work from Slack, the dashboard, `agents <cmd>` and the agents-hub MCP server alike."""
+        return {}
+
     def cli(self) -> dict[str, Callable[[list[str]], int]]:
         """One-shot terminal commands, `agents <plugin> <cmd> ...` (run in that terminal, not the hub); exit codes."""
         return {}

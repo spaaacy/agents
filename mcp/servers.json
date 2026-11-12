@@ -38,5 +38,16 @@
   "slack": {
     "type": "http",
     "url": "https://mcp.slack.com/mcp"
+  },
+  "agents-hub": {
+    "type": "stdio",
+    "command": "${HOME}/.agents/hub/.venv/bin/python",
+    "args": [
+      "-m",
+      "hub.mcp_server"
+    ],
+    "env": {
+      "PYTHONPATH": "${HOME}/.agents"
+    }
   }
 }

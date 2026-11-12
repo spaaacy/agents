@@ -52,6 +52,12 @@
     },
     "linear_sweep": {
       "class": "hub.plugins.linear_sweep.plugin:LinearSweep"
+    },
+    "reminders": {
+      "class": "hub.plugins.reminders.plugin:Reminders"
+    },
+    "background": {
+      "class": "hub.plugins.background.plugin:Background"
     }
   },
   "power": {

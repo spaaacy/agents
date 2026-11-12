@@ -13,6 +13,10 @@ In the bot's DM, a message from the owner that starts with the control prefix
   !cancel <id>            stop a running or queued job
   !pause <plugin>         stop starting new jobs for it (its sources keep queueing)
   !resume <plugin>
+  !remind <when> <what>   a reminder in this DM (when: in 2h, at 3pm, tomorrow 9am, fri 10am, 2026-11-14 09:00)
+  !reminders              the pending ones; !unremind <id> drops one
+  !bg <task>              run a task in the background, read-only; the answer lands here
+  !bg --changes <task>    a task that may change code or tickets: asks for your OK first
   !<plugin> <command> ... a plugin's own command
   !help
 
@@ -135,6 +139,14 @@ def run_command(hub: Hub, words: list[str]) -> str:
         store.delete_value("hub", f"paused:{name}")
         hub.wake()
         return f"{name} resumed"
+    if cmd == "notify" and args:
+        if hub.slack is None or not hub.slack.dm_owner(" ".join(args)):
+            return "couldn't reach Slack to send that"
+        return "sent"
+    for plugin in hub.plugins.values():
+        handler = plugin.aliases().get(cmd)
+        if handler:
+            return handler(args)
     if cmd in hub.plugins:
         commands = hub.plugins[cmd].commands()
         if not args or args[0] not in commands:

@@ -131,3 +131,15 @@ cd ~/.agents && PYTHONPATH=. hub/.venv/bin/python -m unittest discover -s hub/te
 - `linear_sweep` moves Aakif's tickets to the state their code reached, on its own (his call, 2026-11-12), after every staging or production promotion in backend, web and the extension (checked every 10 minutes) and daily at 09:30, then DMs what moved; a quiet daily run says nothing. `!linear_sweep run` runs one now.
 - Slack's agent view (`features.agent_view` in the manifest): the bot shows as an agent in Slack's Messages tab with suggested prompts, each request shows Slack's working state, and its stop button cancels the running job. Slack shows no custom status text there.
 - The hub keeps the Mac awake while it is on the charger (`caffeinate -s` for as long as the hub runs; `power.stay_awake_on_charger` in config.json). Closing the lid still sleeps it unless an external display keeps it open.
+
+## From your own Claude and Codex sessions: the agents-hub MCP server
+
+`hub/mcp_server.py` is an MCP server (stdio) registered for both CLIs from `mcp/servers.json` ("agents-hub"; `python3 mcp/render.py claude --apply` and `codex --apply`). It gives a session five tools, each a call to the running hub's local API:
+
+- `slack_me`: DM Aakif now from the bot.
+- `remind_me`: a reminder the `reminders` plugin posts when due (in 2h, at 3pm, tomorrow 9am, fri 10:30, 2026-11-14 09:00), with snooze buttons. Also `!remind`, `!reminders`, `!unremind` in Slack.
+- `run_in_background`: a task for the `background` plugin, run read-only in the folder the session is in (when that is a repo or worktree the hub knows), its answer in his DM, with buttons for any changes it proposes. `allow_changes` makes it ask for an OK in Slack first, then run in act mode. Also `!bg [--changes] <task>`.
+- `hub_status`, `hub_job`: what the hub is doing, one job's result.
+
+The hub's own runs never load it (their Codex homes list their servers, and PR reviews turn it off), so an agent can't queue work for itself.
+
