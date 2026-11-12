@@ -37,6 +37,7 @@ class SlackService:
         self.bot_dm: str | None = None     # the bot's DM with the owner
         self.bot_aliases: list[str] = []   # every name the bot goes by in Slack (username, display name, real name)
         self.handlers: list[Handler] = []
+        self.interactive_handlers: list[Handler] = []  # Home tab buttons and menus (block_actions payloads)
         self.error: str | None = None
         self.lock = threading.Lock()
 
@@ -95,6 +96,13 @@ class SlackService:
 
         def on_request(client: Any, req: Any) -> None:
             client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
+            if req.type == "interactive":  # a button or menu on the app's Home tab
+                for handler in list(self.interactive_handlers):
+                    try:
+                        handler(req.payload)
+                    except Exception:  # noqa: BLE001
+                        log.exception("a Slack interaction handler failed")
+                return
             if req.type != "events_api":
                 return
             event = req.payload.get("event", {})
@@ -113,6 +121,9 @@ class SlackService:
 
     def subscribe(self, handler: Handler) -> None:
         self.handlers.append(handler)
+
+    def subscribe_interactive(self, handler: Handler) -> None:
+        self.interactive_handlers.append(handler)
 
     @property
     def connected(self) -> bool:

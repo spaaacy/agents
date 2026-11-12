@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from .hub import Hub
 
 log = logging.getLogger("hub.controls")
-HELP = __doc__.split("\n\n")[1].strip() if __doc__ else ""
+HELP = "\n".join(line.strip() for line in (__doc__ or "").splitlines() if line.startswith("  !"))
 
 
 def ago(at: float | None) -> str:

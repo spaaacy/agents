@@ -98,6 +98,9 @@ class Hub:
             from .controls import SlackControls
 
             SlackControls(self).start()
+            from .home import HomeTab
+
+            HomeTab(self).start()
         log.info("hub running: %s; agents on %s", ", ".join(self.plugins) or "no plugins", engine.describe())
         while not self.stopping.is_set():
             write_json(STATUS_FILE, self.snapshot())
