@@ -26,9 +26,12 @@ agents engine                                            # what agents run on no
 agents engine codex                                      # Codex (gpt-6.1-sol, medium effort by default)
 agents engine codex --model gpt-6.1-sol --effort medium  # change the Codex model or effort; kept for later switches
 agents engine claude                                     # Claude
+agents model                                             # every model of both engines with its effort levels
+agents model opus                                        # pick a model by id or short name (sol, astra, opus...); switches the engine to match
+agents effort xhigh                                      # the current model's effort; `default` goes back to the model's own
 ```
 
-The choice is read before every job, so it applies to the next one with no restart; a job already running finishes on its engine. It is stored in `~/.agents/state/engine.json`. The dashboard's Codex/Claude toggle and Slack's `!engine` do the same. How each engine is locked down for unattended runs is described in `~/.agents/README.md` ("Background agents: Codex or Claude") and `core/engine.py`.
+The choice is read before every job, so it applies to the next one with no restart; a job already running finishes on its engine. It is stored in `~/.agents/state/engine.json`. The dashboard's Codex/Claude toggle with its model and effort pickers, and Slack's `!engine`, `!model` and `!effort`, do the same. Codex's model list is the one its CLI caches (`~/.codex/models_cache.json`); Claude's is its aliases (fable, opus, sonnet, haiku) and full ids. How each engine is locked down for unattended runs is described in `~/.agents/README.md` ("Background agents: the hub") and `core/engine.py`.
 
 ## Dashboard
 

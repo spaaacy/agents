@@ -26,6 +26,7 @@
           padding: 3px 10px; font-size: 13px; }
   .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--muted); }
   .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); }
+  select { font: inherit; color: var(--text); background: var(--chip); border: 1px solid var(--line); border-radius: 6px; padding: 2px 4px; }
   button { font: inherit; color: var(--text); background: var(--chip); border: 1px solid var(--line);
            border-radius: 6px; padding: 3px 10px; cursor: pointer; }
   button:hover { border-color: var(--accent); }
@@ -74,7 +75,8 @@
   <span class="chip">agent
     <button id="eng-codex" data-engine="codex">Codex</button>
     <button id="eng-claude" data-engine="claude">Claude</button>
-    <span class="muted" id="engine-text"></span>
+    <select id="model" title="model"></select>
+    <select id="effort" title="effort"></select>
   </span>
   <span class="chip" id="slack"><span class="dot"></span><span>Slack</span></span>
   <span class="chip" id="slots"></span>
@@ -142,12 +144,33 @@ async function command(words) {
   return text;
 }
 
+function fillSelect(select, items, value) {
+  // Rebuild only when the choices changed, so an open dropdown isn't reset by the 3-second refresh.
+  const key = JSON.stringify(items);
+  if (select.dataset.key !== key) {
+    select.replaceChildren(...items.map(([v, label]) => { const o = document.createElement("option"); o.value = v; o.textContent = label; return o; }));
+    select.dataset.key = key;
+  }
+  if (document.activeElement !== select) select.value = value;
+}
+
+function renderPickers(s) {
+  const name = s.engine.engine, pick = s.engine[name] || {}, models = (s.engine_options || {})[name] || [];
+  const items = models.map((m) => [m.slug, m.label === m.slug ? m.slug : `${m.label} (${m.slug})`]);
+  if (!pick.model) items.unshift(["", "default model"]);
+  fillSelect($("model"), items, pick.model || "");
+  const info = models.find((m) => m.slug === pick.model);
+  const efforts = (info ? info.efforts : ["low", "medium", "high", "xhigh", "max"]).map((e) => [e, e + " effort"]);
+  efforts.unshift(["default", "default effort" + (info && info.default_effort ? ` (${info.default_effort})` : "")]);
+  fillSelect($("effort"), efforts, pick.effort || "default");
+}
+
 function renderHeader(s) {
   const alive = Date.now() / 1000 - s.heartbeat_at < 60;
   const hs = $("hubstate"); hs.firstChild.className = "dot " + (alive ? "ok" : "bad");
   hs.lastChild.textContent = alive ? "hub up " + dur(s.started_at).replace(/ \d+s$/, "") : "hub not responding";
   for (const name of ["codex", "claude"]) $("eng-" + name).classList.toggle("on", s.engine.engine === name);
-  $("engine-text").textContent = s.engine_text;
+  renderPickers(s);
   const sl = $("slack");
   if (!s.slack) { sl.firstChild.className = "dot"; sl.lastChild.textContent = "Slack off"; }
   else {
@@ -267,6 +290,8 @@ async function refresh() {
 }
 
 for (const name of ["codex", "claude"]) $("eng-" + name).onclick = () => command(["engine", name]);
+$("model").onchange = () => $("model").value && command(["model", $("model").value]);
+$("effort").onchange = () => command(["effort", $("effort").value]);
 $("f-plugin").onchange = () => state && renderJobs(state);
 $("f-status").onchange = () => state && renderJobs(state);
 const runCmd = () => { const words = $("cmd").value.trim().split(/\s+/).filter(Boolean); if (words.length) { command(words); $("cmd").value = ""; } };

@@ -34,14 +34,33 @@ class Choice(unittest.TestCase):
         self.file.write_text(json.dumps({"engine": "gemini", "codex": {"effort": "huge"}}))
         self.assertEqual(engine.current()["codex"]["effort"], "medium")
 
-    def test_effort_is_codex_only(self):
+    def test_claude_takes_model_and_effort_and_rejects_unknown_levels(self):
+        engine.choose("claude", model="opus", effort="high")
+        self.assertEqual(engine.claude_model_args(), ["--model", "opus", "--effort", "high"])
         with self.assertRaises(ValueError):
-            engine.choose("claude", effort="high")
+            engine.set_effort("ultra")  # a Codex-only level
 
-    def test_claude_model_is_passed_only_when_chosen(self):
-        self.assertEqual(engine.claude_model_args(), [])
-        engine.choose("claude", model="claude-opus-5-5")
-        self.assertEqual(engine.claude_model_args(), ["--model", "claude-opus-5-5"])
+    def test_model_by_short_name_picks_its_engine(self):
+        cache = Path(self.dir.name) / "models_cache.json"
+        cache.write_text(json.dumps({"models": [
+            {"slug": "gpt-6.1-sol", "display_name": "GPT-6.1-Sol", "visibility": "list", "default_reasoning_level": "low",
+             "supported_reasoning_levels": [{"effort": e} for e in ("low", "medium", "high", "ultra")]},
+            {"slug": "gpt-6-luna", "display_name": "GPT-6-Luna", "visibility": "list", "default_reasoning_level": "medium",
+             "supported_reasoning_levels": [{"effort": e} for e in ("low", "medium", "high")]},
+            {"slug": "hidden", "visibility": "hide"}]}))
+        with mock.patch.object(engine, "USER_CODEX_HOME", Path(self.dir.name)):
+            self.assertEqual([m.slug for m in engine.models("codex")], ["gpt-6.1-sol", "gpt-6-luna"])
+            engine.set_model("opus")
+            self.assertEqual((engine.engine(), engine.current()["claude"]["model"]), ("claude", "opus"))
+            engine.set_model("sol", effort="ultra")
+            self.assertEqual(engine.current()["codex"], {"model": "gpt-6.1-sol", "effort": "ultra"})
+            engine.set_model("luna")  # ultra doesn't exist there: back to Luna's own default
+            self.assertEqual(engine.current()["codex"], {"model": "gpt-6-luna", "effort": "medium"})
+            engine.set_effort("default")
+            self.assertEqual(engine.current()["codex"]["effort"], "medium")
+            with self.assertRaises(ValueError):
+                engine.set_model("nonexistent-model")
+            self.assertIn("* gpt-6-luna", engine.listing())
 
 
 class CodexHome(unittest.TestCase):

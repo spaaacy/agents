@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import dataclass
 import os
 import shutil
 import sys
@@ -43,12 +44,33 @@ CODEX = os.environ.get("CODEX_BIN", str(Path.home() / ".local" / "bin" / "codex"
 CLAUDE = os.environ.get("CLAUDE_BIN", str(Path.home() / ".local" / "bin" / "claude"))
 
 ENGINES = ("codex", "claude")
-EFFORTS = ("low", "medium", "high", "xhigh", "max")
+EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultra")  # every level either CLI knows
+CLAUDE_EFFORTS = ("low", "medium", "high", "xhigh", "max")      # `claude --effort`
 DEFAULT: dict[str, Any] = {
     "engine": "codex",
     "codex": {"model": "gpt-6.1-sol", "effort": "medium"},
-    "claude": {"model": None},
+    "claude": {"model": None, "effort": None},  # None: the CLI's own default
 }
+# Claude Code takes an alias for the newest of a family or a full model id (`claude --help`).
+CLAUDE_MODELS = [("fable", "Fable (newest)"), ("opus", "Opus (newest)"), ("sonnet", "Sonnet (newest)"),
+                 ("haiku", "Haiku (newest)"), ("claude-fable-5-2", "Fable 5.2"), ("claude-opus-5-5", "Opus 5.5"),
+                 ("claude-sonnet-5-5", "Sonnet 5.5"), ("claude-haiku-5-5", "Haiku 5.5")]
+# When Codex's model list can't be read (it is cached by the Codex CLI in ~/.codex/models_cache.json).
+CODEX_FALLBACK_MODELS = [("gpt-6.1-sol", "GPT-6.1-Sol"), ("gpt-6-astra", "GPT-6-Astra"), ("gpt-6-sol", "GPT-6-Sol")]
+
+
+@dataclass(frozen=True)
+class Model:
+    engine: str
+    slug: str
+    label: str
+    efforts: tuple[str, ...]
+    default_effort: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"engine": self.engine, "slug": self.slug, "label": self.label, "efforts": list(self.efforts),
+                "default_effort": self.default_effort}
+
 
 # Linear's read tools; its write tools stay off in unattended runs.
 LINEAR_READ_TOOLS = [
@@ -70,6 +92,47 @@ READ_ONLY_MCP_SERVERS = {"datadog"}
 HIDDEN_PATHS = [Path.home() / ".ssh"]
 
 
+# --------------------------------------------------------------------------- the models
+
+
+def models(name: str) -> list[Model]:
+    """What ``name`` can run, newest first: Codex's list as its CLI caches it, Claude's aliases and ids."""
+    if name == "claude":
+        return [Model("claude", slug, label, CLAUDE_EFFORTS, None) for slug, label in CLAUDE_MODELS]
+    try:
+        data = json.loads((USER_CODEX_HOME / "models_cache.json").read_text())
+        listed = data.get("models", data) if isinstance(data, dict) else data
+        found = [
+            Model("codex", m["slug"], m.get("display_name") or m["slug"],
+                  tuple(level["effort"] for level in m.get("supported_reasoning_levels", []) if level.get("effort"))
+                  or EFFORTS[:5], m.get("default_reasoning_level"))
+            for m in listed if isinstance(m, dict) and m.get("slug") and m.get("visibility", "list") == "list"
+        ]
+    except (OSError, ValueError, KeyError, TypeError):
+        found = []
+    return found or [Model("codex", slug, label, EFFORTS[:5], "medium") for slug, label in CODEX_FALLBACK_MODELS]
+
+
+def find_model(name: str, prefer: str | None = None) -> Model:
+    """A model by its id, its label, or a short name ("sol", "6-astra", "opus"); the preferred engine's first.
+
+    Short names match the end of an id first ("sol" is gpt-6.1-sol, the newest Sol), then any part of it.
+    """
+    wanted = name.strip().lower()
+    order = [prefer] + [e for e in ENGINES if e != prefer] if prefer in ENGINES else list(ENGINES)
+    every = [m for engine_name in order for m in models(engine_name)]
+    for test in (lambda m: m.slug.lower() == wanted, lambda m: m.label.lower() == wanted,
+                 lambda m: m.slug.lower().endswith("-" + wanted), lambda m: wanted in m.slug.lower()):
+        for model in every:
+            if test(model):
+                return model
+    raise ValueError(f"no model called {name!r}; try one of: " + ", ".join(m.slug for m in every))
+
+
+def model_info(name: str, slug: str | None) -> Model | None:
+    return next((m for m in models(name) if m.slug == slug), None) if slug else None
+
+
 # --------------------------------------------------------------------------- the choice
 
 
@@ -83,11 +146,13 @@ def current(path: Path | None = None) -> dict[str, Any]:
     choice = json.loads(json.dumps(DEFAULT))
     if saved.get("engine") in ENGINES:
         choice["engine"] = saved["engine"]
-    for engine in ENGINES:
-        if isinstance(saved.get(engine), dict):
-            choice[engine].update({k: v for k, v in saved[engine].items() if k in choice[engine]})
+    for name in ENGINES:
+        if isinstance(saved.get(name), dict):
+            choice[name].update({k: v for k, v in saved[name].items() if k in choice[name]})
     if choice["codex"]["effort"] not in EFFORTS:
         choice["codex"]["effort"] = DEFAULT["codex"]["effort"]
+    if choice["claude"]["effort"] not in (None, *CLAUDE_EFFORTS):
+        choice["claude"]["effort"] = None
     return choice
 
 
@@ -95,38 +160,104 @@ def engine(path: Path | None = None) -> str:
     return current(path)["engine"]
 
 
-def choose(name: str, model: str | None = None, effort: str | None = None, path: Path | None = None) -> dict[str, Any]:
-    """Switch every background tool to ``name``; a model or effort given is kept for later switches too."""
+def _save(choice: dict[str, Any], path: Path | None = None) -> dict[str, Any]:
     path = path or CHOICE_FILE
-    if name not in ENGINES:
-        raise ValueError(f"unknown engine {name!r}; pick one of {', '.join(ENGINES)}")
-    if effort is not None and (name != "codex" or effort not in EFFORTS):
-        raise ValueError(f"effort is a Codex setting, one of {', '.join(EFFORTS)}")
-    choice = current(path)
-    choice["engine"] = name
-    if model:
-        choice[name]["model"] = model
-    if effort:
-        choice["codex"]["effort"] = effort
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
+    tmp = path.with_suffix(f".{os.getpid()}.tmp")
     tmp.write_text(json.dumps(choice, indent=1) + "\n")
     tmp.replace(path)
     return choice
 
 
+def _apply_effort(choice: dict[str, Any], name: str, level: str | None) -> None:
+    """Set ``name``'s effort, checked against what its current model accepts; "default" or None clears it."""
+    if level in (None, "", "default"):
+        info = model_info(name, choice[name]["model"])
+        choice[name]["effort"] = (info.default_effort if info and info.default_effort else DEFAULT["codex"]["effort"]) \
+            if name == "codex" else None
+        return
+    info = model_info(name, choice[name]["model"])
+    allowed = info.efforts if info else (CLAUDE_EFFORTS if name == "claude" else EFFORTS)
+    if level not in allowed:
+        model = choice[name]["model"] or "the default model"
+        raise ValueError(f"{model} takes effort {', '.join(allowed)}; not {level!r}")
+    choice[name]["effort"] = level
+
+
+def choose(name: str, model: str | None = None, effort: str | None = None, path: Path | None = None) -> dict[str, Any]:
+    """Switch every plugin to engine ``name``; a model or effort given is kept for later switches too."""
+    if name not in ENGINES:
+        raise ValueError(f"unknown engine {name!r}; pick one of {', '.join(ENGINES)}")
+    choice = current(path)
+    choice["engine"] = name
+    if model:
+        picked = find_model(model, prefer=name)
+        if picked.engine != name:
+            raise ValueError(f"{picked.slug} is a {picked.engine} model, not a {name} one")
+        _set_model(choice, picked)
+    if effort:
+        _apply_effort(choice, name, effort)
+    return _save(choice, path)
+
+
+def _set_model(choice: dict[str, Any], picked: Model) -> None:
+    choice["engine"] = picked.engine
+    choice[picked.engine]["model"] = picked.slug
+    if choice[picked.engine]["effort"] not in (None, *picked.efforts):
+        # The old effort doesn't exist for this model (ultra on Luna): fall back to the model's own default.
+        choice[picked.engine]["effort"] = picked.default_effort if picked.engine == "codex" else None
+
+
+def set_model(name: str, effort: str | None = None, path: Path | None = None) -> dict[str, Any]:
+    """Pick a model by name; picking another engine's model ("opus" while on Codex) switches the engine too."""
+    choice = current(path)
+    picked = find_model(name, prefer=choice["engine"])
+    _set_model(choice, picked)
+    if effort:
+        _apply_effort(choice, picked.engine, effort)
+    return _save(choice, path)
+
+
+def set_effort(level: str, path: Path | None = None) -> dict[str, Any]:
+    """The current engine's effort ("default" goes back to the model's own)."""
+    choice = current(path)
+    _apply_effort(choice, choice["engine"], level)
+    return _save(choice, path)
+
+
 def describe(choice: dict[str, Any] | None = None) -> str:
     choice = choice or current()
-    if choice["engine"] == "codex":
-        return f"codex ({choice['codex']['model']}, {choice['codex']['effort']} effort)"
-    model = choice["claude"].get("model")
-    return f"claude ({model})" if model else "claude (its default model)"
+    name = choice["engine"]
+    model = choice[name].get("model") or "its default model"
+    effort = choice[name].get("effort")
+    return f"{name} ({model}, {effort + ' effort' if effort else 'default effort'})"
+
+
+def options() -> dict[str, Any]:
+    """Every engine's models and efforts, for the dashboard's pickers."""
+    return {name: [m.to_dict() for m in models(name)] for name in ENGINES}
 
 
 def claude_model_args(choice: dict[str, Any] | None = None) -> list[str]:
-    """``--model`` for a claude run when a Claude model was chosen, else nothing."""
-    model = (choice or current())["claude"].get("model")
-    return ["--model", model] if model else []
+    """``--model`` and ``--effort`` for a claude run, each only when one was chosen."""
+    picked = (choice or current())["claude"]
+    args = ["--model", picked["model"]] if picked.get("model") else []
+    return args + (["--effort", picked["effort"]] if picked.get("effort") else [])
+
+
+def listing(choice: dict[str, Any] | None = None) -> str:
+    """`agents model` with no name: the current pick, then every model of both engines."""
+    choice = choice or current()
+    lines = [f"now: {describe(choice)}", ""]
+    for name in ENGINES:
+        lines.append(f"{name}:")
+        for m in models(name):
+            mark = "*" if choice["engine"] == name and choice[name]["model"] == m.slug else " "
+            default = f", default {m.default_effort}" if m.default_effort else ""
+            lines.append(f" {mark} {m.slug:<20} {m.label:<16} effort {'/'.join(m.efforts)}{default}")
+    lines.append("")
+    lines.append("pick one: `model <name>` (a short name works: sol, astra, opus); effort: `effort <level>`")
+    return "\n".join(lines)
 
 
 # --------------------------------------------------------------------------- the Codex home
@@ -318,21 +449,54 @@ def final_text(output: Path, events: CodexEvents) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="agents-engine", description="Pick Codex or Claude for the background tools.")
+    """`agents engine [codex|claude] [--model M] [--effort E]`."""
+    parser = argparse.ArgumentParser(prog="agents engine", description="Pick Codex or Claude for every plugin.")
     parser.add_argument("engine", nargs="?", choices=ENGINES, help="switch to this engine; omit to print the choice")
     parser.add_argument("--model", help="model for that engine (kept for later switches)")
-    parser.add_argument("--effort", choices=EFFORTS, help="Codex reasoning effort (kept for later switches)")
+    parser.add_argument("--effort", choices=EFFORTS, help="effort for that engine (kept for later switches)")
     args = parser.parse_args(argv)
     if args.engine is None:
         if args.model or args.effort:
             parser.error("name the engine the model or effort is for")
-        print(f"background agents run on {describe()}")
+        print(f"agents run on {describe()}")
         return 0
     try:
         choice = choose(args.engine, args.model, args.effort)
     except ValueError as exc:
         parser.error(str(exc))
-    print(f"background agents now run on {describe(choice)}; the next request uses it, no restart needed")
+    print(f"agents now run on {describe(choice)}; the next job uses it, no restart needed")
+    return 0
+
+
+def model_main(argv: list[str]) -> int:
+    """`agents model [name] [--effort E]`."""
+    parser = argparse.ArgumentParser(prog="agents model", description="Pick the model (and its engine).")
+    parser.add_argument("name", nargs="?", help="model id or short name (sol, astra, opus...); omit to list them")
+    parser.add_argument("--effort", choices=EFFORTS)
+    args = parser.parse_args(argv)
+    if not args.name:
+        print(listing())
+        return 0
+    try:
+        choice = set_model(args.name, args.effort)
+    except ValueError as exc:
+        print(exc)
+        return 2
+    print(f"agents now run on {describe(choice)}; the next job uses it")
+    return 0
+
+
+def effort_main(argv: list[str]) -> int:
+    """`agents effort [level|default]`."""
+    if not argv:
+        print(f"agents run on {describe()}")
+        return 0
+    try:
+        choice = set_effort(argv[0])
+    except ValueError as exc:
+        print(exc)
+        return 2
+    print(f"agents now run on {describe(choice)}; the next job uses it")
     return 0
 
 

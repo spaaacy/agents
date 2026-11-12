@@ -55,11 +55,12 @@ agents status                  # what runs, what waits, what failed
 agents open                    # the dashboard (http://127.0.0.1:8765): every job, live, with retry, cancel and pause
 agents watch                   # the same feed in this terminal
 agents engine codex            # Codex (gpt-6.1-sol, medium effort by default) for every plugin; `agents engine claude` to switch back
-agents engine codex --model gpt-6.1-sol --effort medium
+agents model                   # every Codex and Claude model with its effort levels; `agents model opus` or `agents model sol` picks one (and its engine)
+agents effort high             # the current model's effort; `agents effort default` goes back to the model's own
 agents check                   # tokens, sign-ins and CLIs; posts nothing
 ```
 
-In the bot's Slack DM, a message starting with `!` controls the hub (`!status`, `!engine claude`, `!retry <id>`, `!pause pr_review`, `!help`); anything else is a question for the agent. The engine choice is `state/engine.json` (not in git) and applies to the next job, no restart. Codex runs in the hub's locked-down home (`hub/core/engine.py`): every file read-only, `~/.ssh` unreadable, network on, nothing approved, Linear's read tools only, and `hub/core/background.rules` refusing git push, `gh api`, PR and issue writes and `az`. Those rules match commands as written, so a command built to dodge them is held back only by the read-only files and the missing ssh keys. PR reviews run in a throwaway checkout with Codex's normal protections and automatic approval review, because they run tests. Run the hub's tests with `PYTHONPATH=. hub/.venv/bin/python -m unittest discover -s hub/tests -t .`.
+In the bot's Slack DM, a message starting with `!` controls the hub (`!status`, `!engine claude`, `!model opus`, `!effort high`, `!retry <id>`, `!pause pr_review`, `!help`); anything else is a question for the agent. The engine choice is `state/engine.json` (not in git) and applies to the next job, no restart. Codex runs in the hub's locked-down home (`hub/core/engine.py`): every file read-only, `~/.ssh` unreadable, network on, nothing approved, Linear's read tools only, and `hub/core/background.rules` refusing git push, `gh api`, PR and issue writes and `az`. Those rules match commands as written, so a command built to dodge them is held back only by the read-only files and the missing ssh keys. PR reviews run in a throwaway checkout with Codex's normal protections and automatic approval review, because they run tests. Run the hub's tests with `PYTHONPATH=. hub/.venv/bin/python -m unittest discover -s hub/tests -t .`.
 
 ## Codex setup
 

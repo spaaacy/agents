@@ -7,6 +7,8 @@ In the bot's DM, a message from the owner that starts with the control prefix
   !jobs [plugin]          the last jobs
   !job <id>               one job: state, link, error, resume command
   !engine [codex|claude] [--effort E] [--model M]
+  !model [name] [--effort E]   list the models, or pick one (sol, astra, opus...)
+  !effort [level|default]
   !retry <id>             run a finished job again
   !cancel <id>            stop a running or queued job
   !pause <plugin>         stop starting new jobs for it (its sources keep queueing)
@@ -94,6 +96,23 @@ def run_command(hub: Hub, words: list[str]) -> str:
                 model, effort = (value, effort) if flag == "--model" else (model, value)
         try:
             engine.choose(name, model, effort)
+        except ValueError as exc:
+            return str(exc)
+        return f"agents now run on {engine.describe()}; the next job uses it"
+    if cmd == "model":
+        if not args:
+            return engine.listing()
+        effort = args[args.index("--effort") + 1] if "--effort" in args and args.index("--effort") + 1 < len(args) else None
+        try:
+            engine.set_model(args[0], effort)
+        except ValueError as exc:
+            return str(exc)
+        return f"agents now run on {engine.describe()}; the next job uses it"
+    if cmd == "effort":
+        if not args:
+            return f"agents run on {engine.describe()}"
+        try:
+            engine.set_effort(args[0])
         except ValueError as exc:
             return str(exc)
         return f"agents now run on {engine.describe()}; the next job uses it"

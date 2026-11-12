@@ -4,6 +4,8 @@
   agents status                engine, plugins, Slack, running and queued jobs
   agents check                 tokens, sign-ins, CLIs, per plugin; posts nothing
   agents engine [codex|claude] [--model M] [--effort E]
+  agents model [name] [--effort E]   list the models, or pick one (sol, astra, opus...; picks its engine too)
+  agents effort [level|default]      the current model's effort (low, medium, high, xhigh, max; ultra on some Codex models)
   agents jobs [plugin] | job <id> | retry <id> | cancel <id> | pause <plugin> | resume <plugin>
   agents open                  the dashboard in the browser
   agents watch [--once]        live view of jobs in this terminal
@@ -74,6 +76,10 @@ def main(argv: list[str] | None = None) -> int:
     cmd, rest = args[0], args[1:]
     if cmd == "engine":
         return engine.main(rest)
+    if cmd == "model":
+        return engine.model_main(rest)
+    if cmd == "effort":
+        return engine.effort_main(rest)
     cfg = load_config()
     if cmd == "serve":
         setup_logging(to_file=True)

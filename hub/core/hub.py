@@ -142,6 +142,7 @@ class Hub:
             "heartbeat_at": time.time(),
             "engine": engine.current(),
             "engine_text": engine.describe(),
+            "engine_options": engine.options(),
             "slots": self.scheduler.slots,
             "running": self.scheduler.running(),
             "slack": slack,
