@@ -61,9 +61,12 @@ class SlackService:
         self.bot_aliases = [name for name in [self.bot_name] if name]
         try:  # the display and real names people type ("@claude-aakif"), beside the username ("claudeaakif")
             profile = self.web.users_info(user=self.bot_user_id)["user"]
-            for name in (profile.get("profile", {}).get("display_name"), profile.get("real_name"), profile.get("name")):
+            shown = [profile.get("profile", {}).get("display_name"), profile.get("real_name")]
+            for name in (*shown, profile.get("name")):
                 if name and name not in self.bot_aliases:
                     self.bot_aliases.append(name)
+            # What people see in Slack ("Aakif's Dot"), not the username the app was created with ("claudeaakif").
+            self.bot_name = next((name for name in shown if name), self.bot_name)
         except Exception:  # noqa: BLE001 - needs users:read; the username alone still works
             log.warning("could not read the bot's display name", exc_info=True)
         try:
