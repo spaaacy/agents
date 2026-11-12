@@ -1,7 +1,7 @@
 {
     "display_information": {
         "name": "Aakif's Dot",
-        "description": "Answers Aakif's Slack requests with the coding agent running on his Mac (Codex or Claude). Never edits code, tickets or anything else.",
+        "description": "Answers Aakif's Slack requests with the coding agent running on his Mac (Codex or Claude). Changes code or tickets only when he taps a button.",
         "background_color": "#D97757"
     },
     "features": {
