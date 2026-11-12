@@ -36,6 +36,7 @@ class SlackService:
         self.bot_name: str | None = None   # the app's current name in Slack, e.g. "claude-aakif"
         self.bot_dm: str | None = None     # the bot's DM with the owner
         self.bot_aliases: list[str] = []   # every name the bot goes by in Slack (username, display name, real name)
+        self.bot_username: str | None = None
         self.handlers: list[Handler] = []
         self.interactive_handlers: list[Handler] = []  # Home tab buttons and menus (block_actions payloads)
         self.error: str | None = None
@@ -58,6 +59,7 @@ class SlackService:
         self.web = WebClient(token=bot_token)
         auth = self.web.auth_test()
         self.bot_user_id, self.bot_name = auth["user_id"], auth.get("user")
+        self.bot_username = auth.get("user")  # the handle the app was created with; kept by Slack across renames
         self.bot_aliases = [name for name in [self.bot_name] if name]
         try:  # the display and real names people type ("@claude-aakif"), beside the username ("claudeaakif")
             profile = self.web.users_info(user=self.bot_user_id)["user"]

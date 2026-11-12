@@ -7,7 +7,7 @@ Only the owner's messages are answered:
   people), a message that starts with a trigger word: answered under the
   owner's name, marked "🤖 <engine>:", through the owner's user token.
 
-The trigger words are config.json's "trigger_words" plus "@<the app's name>"
+The trigger words are config.json's "trigger_words" (@dot) plus "@<the name people see>", never the username the app was created with
 as Slack reports it when the hub starts, so renaming the app needs no code
 change. The owner's messages in the bot's DM that start with the control
 prefix ("!") are hub commands, never questions.
@@ -56,7 +56,7 @@ MAX_REPLY_CHARS = 11_000  # chat.postMessage markdown_text takes 12,000
 MAX_CONTEXT_MESSAGES = 60
 MAX_MESSAGE_CHARS = 4_000
 CHANNEL_HISTORY = 15  # messages before a top-level request, for context
-DEFAULT_TRIGGERS = ("@claude",)
+DEFAULT_TRIGGERS = ("@dot",)
 REPLY_MARK = re.compile(r"^🤖 [\w.-]+:")  # how answers posted under the owner's name were marked before 2026-11-12
 MINE_KEPT = 500  # answers remembered per conversation
 PROPOSED = re.compile(r"^[ \t>*_-]*PROPOSED:[ \t]*(.+?)[ \t*_]*$", re.MULTILINE)
@@ -317,10 +317,13 @@ class SlackAsk(Plugin):
         return self.hub.cfg.get("slack", {}).get("control_prefix", "!")
 
     def triggers(self) -> list[str]:
+        """config.json's words plus "@<the name people see>"; never the username the app was created with
+        (Slack keeps "claudeaakif" after a rename, and a typed old name shouldn't summon the bot)."""
         words = list(self.config.get("trigger_words") or DEFAULT_TRIGGERS)
-        names = list(getattr(self.slack, "bot_aliases", None) or [])
+        username = getattr(self.slack, "bot_username", None)
+        names = [name for name in (getattr(self.slack, "bot_aliases", None) or []) if name != username]
         bot_name = getattr(self.slack, "bot_name", None)
-        if bot_name and bot_name not in names:
+        if bot_name and bot_name not in names and bot_name != username:
             names.append(bot_name)
         words += [f"@{name}" for name in names if f"@{name}" not in words]
         return sorted(set(words), key=len, reverse=True)

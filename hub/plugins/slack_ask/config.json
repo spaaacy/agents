@@ -1,6 +1,6 @@
 {
   "trigger_words": [
-    "@claude"
+    "@dot"
   ],
   "timeout_seconds": 900,
   "extra_mcp_servers": [

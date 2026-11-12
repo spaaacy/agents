@@ -142,11 +142,22 @@ class Triggers(unittest.TestCase):
     def test_longer_word_wins_so_nothing_is_left_dangling(self):
         self.assertEqual(sa.strip_trigger("@claude-aakif hi", BOT, ["@claude", "@claude-aakif"]), "hi")
 
+    def test_the_old_username_no_longer_summons_the_bot(self):
+        with tempfile.TemporaryDirectory() as root:
+            slack = FakeSlack(bot_name="Aakif's Dot")
+            slack.bot_username = "claudeaakif"
+            slack.bot_aliases = ["claudeaakif", "Aakif's Dot"]
+            plugin, _ = make_plugin(root, slack)
+            self.assertEqual(sorted(plugin.triggers()), ["@Aakif's Dot", "@dot"])
+            self.assertIsNone(sa.strip_trigger("@claudeaakif hi", BOT, plugin.triggers()))
+            self.assertIsNone(sa.strip_trigger("@claude hi", BOT, plugin.triggers()))
+            self.assertEqual(sa.strip_trigger(f"<@{BOT}> hi", BOT, plugin.triggers()), "hi")
+
     def test_renamed_bot_is_a_trigger_without_code_changes(self):
         with tempfile.TemporaryDirectory() as root:
             plugin, _ = make_plugin(root, FakeSlack(bot_name="envoy-agent"))
             self.assertIn("@envoy-agent", plugin.triggers())
-            self.assertIn("@claude", plugin.triggers())
+            self.assertIn("@dot", plugin.triggers())
             self.assertEqual(sa.strip_trigger("@envoy-agent look at this", BOT, plugin.triggers()), "look at this")
 
 
@@ -168,7 +179,7 @@ class Mentions(unittest.TestCase):
         self.assertIsNone(sa.mention_from_event(event(channel=BOT_DM, text="  !engine claude"), OWNER, BOT, BOT_DM, False))
 
     def test_other_dm_needs_trigger_and_user_token(self):
-        e = event(text="@claude summarize")
+        e = event(text="@dot summarize")
         self.assertIsNone(sa.mention_from_event(e, OWNER, BOT, BOT_DM, False))
         m = sa.mention_from_event(e, OWNER, BOT, BOT_DM, True)
         self.assertEqual((m.text, m.as_user), ("summarize", True))
