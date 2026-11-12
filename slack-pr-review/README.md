@@ -8,9 +8,9 @@ The collector calls Codex's documented `mcpServer/tool/call` protocol without a 
 
 ## Who reviews: Codex or Claude
 
-`python3 runner.py reviewer claude` or `python3 runner.py reviewer codex` picks who reviews the next PR; `python3 runner.py reviewer` prints the current choice. No restart is needed: the worker reads it before each review, and a review already running finishes with its own reviewer. Each job records its reviewer, and `watch-pr-reviews` shows the current one. The Slack collector stays on Codex either way.
+`agents-engine codex` or `agents-engine claude` (see `~/.agents/README.md`) picks the agent for every background tool, this one included; `agents-engine` prints the current choice, and `python3 runner.py reviewer [codex|claude]` does the same. No restart is needed: the worker reads it before each review, and a review already running finishes with its own reviewer. Each job records its reviewer, and `watch-pr-reviews` shows the current one. The Slack collector stays on Codex either way.
 
-- Codex uses the model and reasoning settings in the normal Codex configuration, with its normal protections and automatic approval review.
+- Codex runs with the model and effort the switch names (gpt-6.1-sol at medium by default), with its normal protections and automatic approval review.
 - Claude runs headless, the slack-claude bot's way: none of the saved Claude settings (`--setting-sources ""`), `--permission-mode dontAsk` with `claude_allowed_tools` in `config.json` (reads, git and gh reads, tests), and the deny list in `claude-settings.json` (no edits, commits, pushes, `gh api`, PR comments or reviews, `az`, Slack). The review and post-review skills are given to it inline, and the draft comes back as structured output (`--json-schema`). Reopen a Claude review with `cd <review folder>/checkout && claude --resume <session>`; the viewer prints it.
 
 Both reviewers' drafts go through the same checks and the same publisher.
@@ -36,6 +36,7 @@ Ctrl-C closes only the view; the background worker continues. `watch-pr-reviews 
 ```sh
 cd ~/.agents/slack-pr-review
 python3 runner.py status
+python3 runner.py reviewer          # the engine every background tool runs on
 python3 runner.py preview --hours 24
 python3 runner.py draft https://github.com/envoy-ai/envoyai-backend/pull/2909
 python3 runner.py disable

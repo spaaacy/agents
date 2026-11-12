@@ -5,22 +5,25 @@ Every minute, while Datadog On-Call says Aakif is on call for the team in
 config.json, the runner reads the monitor alert events since its last check. A
 page is an alert event that entered a non-OK state and notified the on-call
 handle (the rule monitoring/history.py uses). New pages wait a short while so a
-burst is investigated together, then Claude runs the on-call skill on them,
-read-only, and the report goes to Aakif's Slack DM from the @claude-aakif bot,
-in a thread under a short "paged" message. A monitor that pages again soon
-after it was investigated gets a line in that thread instead of a new run.
+burst is investigated together, then the agent `agents-engine` names (Codex or
+Claude, ~/.agents/engine/engine.py) runs the on-call skill on them, read-only,
+and the report goes to Aakif's Slack DM from the @claude-aakif bot, in a thread
+under a short "paged" message. A monitor that pages again soon after it was
+investigated gets a line in that thread instead of a new run.
 
 Claude runs with none of the user's saved settings, only this folder's allow
 list (config.json) and deny list (claude-settings.json), in dontAsk mode,
-which refuses every tool the allow list does not name. The runner, not the
-model, posts to Slack.
+which refuses every tool the allow list does not name. Codex runs from the
+unattended Codex home engine.py builds: files read-only, network on, nothing
+approved, and engine/background.rules refusing the commands that write
+elsewhere. The runner, not the model, posts to Slack.
 
-Every run is recorded under state/runs/<id>/ (run.json and Claude's events as
-they stream), and state/status.json is a heartbeat; watch.py shows both live.
+Every run is recorded under state/runs/<id>/ (run.json and the agent's events
+as they stream), and state/status.json is a heartbeat; watch.py shows both live.
 
 Commands:
   runner.py run                  poll Datadog and investigate pages (what the LaunchAgent runs)
-  runner.py check                keys, Datadog, who is on call, Slack and the claude CLI; posts nothing
+  runner.py check                keys, Datadog, who is on call, Slack, the agent CLIs; posts nothing
   runner.py preview [--hours N]  the pages of the last N hours and what the runner would do with them
   runner.py once [--hours N] [--post]
                                  investigate the pages of the last N hours now and print the report
@@ -58,6 +61,7 @@ MCP_FILE = STATE / "mcp.json"
 LOG_FILE = STATE / "runner.log"
 SKILL_FILE = Path.home() / ".agents" / "skills" / "on-call" / "SKILL.md"
 SLACK_CLAUDE = Path.home() / ".agents" / "slack-claude" / "bot.py"
+ENGINE_FILE = Path.home() / ".agents" / "engine" / "engine.py"
 
 DATADOG_API = "https://api.datadoghq.com/api/v2"
 SLACK_API = "https://slack.com/api"
@@ -70,7 +74,7 @@ SYSTEM_PROMPT = """\
 You are investigating Datadog pages for Aakif Mohamed, an engineer at Envoy AI \
 who is on call this week. He was just paged by phone and may be reading your \
 report on his phone, so it is short and exact: times, counts, who is hurt, and \
-the next action. Write it the way Claude Code talks to him, in his Voice and \
+the next action. Write it the way his coding agent talks to him, in his Voice and \
 Communication style rules (repeated at the end of the request); while \
 customers are still hurt right now, the facts come first and the bits drop, as \
 those rules say. Nobody is watching the run and nobody can answer a question. \
@@ -97,11 +101,10 @@ to list, not to do. The session's Datadog tools are not connected in an \
 unattended run; read Datadog with `python3 {dd} ...` (monitors, logs, \
 logs-count, metric; `--help` for the arguments) and `python3 \
 monitoring/history.py ...` from the backend checkout. The keys are already in \
-the environment: never source the keys file. One command per Bash call: a \
-chained command is refused whole.
+the environment: never source the keys file. {limits}
 - When a page has already cleared, say so and how long it lasted; it still \
 gets its class and evidence.
-- When one of Aakif's own tools got in your way (this run's allow list, dd.py, \
+- When one of Aakif's own tools got in your way (this run's tool limits, dd.py, \
 history.py, the on-call skill, the pg-readonly server), add a last follow-up \
 naming the problem and the fix you'd suggest.
 
@@ -109,6 +112,14 @@ naming the problem and the fix you'd suggest.
 {skill}
 </skill>
 """
+
+# What the model is told about its shell, per engine: Claude's allow list refuses a
+# chained command whole; Codex runs any read but refuses writes.
+SHELL_LIMITS = {
+    "claude": "One command per Bash call: a chained command is refused whole.",
+    "codex": "Files are read-only, and commands that write somewhere else (git push, gh api, PR "
+    "or issue writes, az) are refused.",
+}
 
 log = logging.getLogger("on-call-runner")
 
@@ -132,6 +143,19 @@ def _load_slack_claude() -> Any:
 
 
 shared = _load_slack_claude()
+
+
+def _load_engine() -> Any:
+    """~/.agents/engine/engine.py: which agent runs, and the unattended Codex setup."""
+    spec = importlib.util.spec_from_file_location("agents_engine", ENGINE_FILE)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {ENGINE_FILE}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+engine = _load_engine()
 
 
 def write_json(path: Path, data: Any) -> None:
@@ -405,12 +429,13 @@ def skill_text(path: Path = SKILL_FILE) -> str:
     return text.strip()
 
 
-def build_prompt(pages: Sequence[Page], skill: str) -> str:
+def build_prompt(pages: Sequence[Page], skill: str, agent: str = "claude") -> str:
     monitors = " ".join(sorted({str(page.monitor_id) for page in pages}))
     prompt = UNATTENDED.format(
         pages="\n".join(page.line() for page in pages),
         skill=skill.replace("$ARGUMENTS", monitors),
         dd=HERE / "dd.py",
+        limits=SHELL_LIMITS.get(agent, SHELL_LIMITS["claude"]),
     )
     reminder = shared.turn_reminder()
     return prompt + "\n" + reminder if reminder else prompt
@@ -439,6 +464,7 @@ def claude_command(cfg: dict[str, Any], mcp_path: Path | None) -> list[str]:
         cmd += ["--add-dir", str(Path(directory).expanduser())]
     if mcp_path is not None:
         cmd += ["--mcp-config", str(mcp_path)]
+    cmd += engine.claude_model_args()
     # Takes every following argument, so it stays last.
     cmd += ["--allowedTools", *cfg["allowed_tools"]]
     return cmd
@@ -451,6 +477,8 @@ class Report:
     error: str | None = None
     cost_usd: float | None = None
     refused: int = 0
+    agent: str = "claude"
+    tokens: int | None = None
 
 
 Execute = Callable[[list[str], str, Path, int, Callable[[str], None]], tuple[int, str]]
@@ -499,6 +527,106 @@ def run_claude(cfg: dict[str, Any], prompt: str, events_path: Path | None, execu
     return Report(str(final.get("result") or "").strip(), session, None, cost, refused)
 
 
+CodexExecute = Callable[[list[str], str, Path, int, Callable[[str], None], dict[str, str]], tuple[int, str]]
+
+
+def stream_with_env(
+    cmd: list[str], prompt: str, cwd: Path, timeout: int, on_line: Callable[[str], None], env: dict[str, str]
+) -> tuple[int, str]:
+    """slack-claude's stream_process with an environment: (exit code, stderr), each stdout line handed over.
+
+    Raises subprocess.TimeoutExpired after killing a run that outlives the timeout.
+    """
+    proc = subprocess.Popen(
+        cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=cwd, env=env
+    )
+    killed = threading.Event()
+
+    def kill() -> None:
+        killed.set()
+        proc.kill()
+
+    timer = threading.Timer(timeout, kill)
+    timer.daemon = True
+    timer.start()
+    stderr: list[str] = []
+    reader = threading.Thread(target=lambda: stderr.append(proc.stderr.read() if proc.stderr else ""), daemon=True)
+    reader.start()
+    try:
+        if proc.stdin:
+            try:
+                proc.stdin.write(prompt)
+                proc.stdin.close()
+            except BrokenPipeError:
+                pass  # it exited before reading; its stderr says why
+        for line in proc.stdout or []:
+            on_line(line)
+        code = proc.wait()
+    finally:
+        timer.cancel()
+    reader.join(timeout=5)
+    if killed.is_set():
+        raise subprocess.TimeoutExpired(cmd, timeout)
+    return code, "".join(stderr)
+
+
+def run_codex(
+    cfg: dict[str, Any], prompt: str, events_path: Path | None, execute: CodexExecute | None = None
+) -> Report:
+    """One investigation on Codex, from the unattended home: a new session, the prompt on stdin.
+
+    Codex has no appended system prompt, so the investigator's brief opens the
+    prompt. The Datadog keys reach its commands through the environment
+    (build_runner puts them in os.environ, which codex_env starts from).
+    """
+    STATE.mkdir(exist_ok=True)
+    home = engine.prepare_codex_home(list(cfg.get("mcp_servers", [])) + ["linear"])
+    output = events_path.with_name("last-message.txt") if events_path else STATE / "codex-last-message.txt"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.unlink(missing_ok=True)
+    workdir = Path(cfg["workdir"]).expanduser()
+    timeout = int(cfg.get("timeout_seconds", 1500))
+    parsed = engine.CodexEvents()
+    events = events_path.open("a") if events_path else None
+
+    def on_line(line: str) -> None:
+        if events:
+            events.write(line if line.endswith("\n") else line + "\n")
+            events.flush()
+        parsed.feed(line)
+
+    try:
+        code, stderr = (execute or stream_with_env)(
+            engine.codex_command(workdir, output),
+            SYSTEM_PROMPT + "\n" + prompt,
+            workdir,
+            timeout,
+            on_line,
+            engine.codex_env(home),
+        )
+    except subprocess.TimeoutExpired:
+        return Report("", parsed.session, f"Codex did not finish within {timeout} seconds", agent="codex")
+    finally:
+        if events:
+            events.close()
+    text = engine.final_text(output, parsed)
+    tokens = parsed.tokens()
+    log.info("codex finished: session %s, %s tokens, %d commands refused", parsed.session, tokens, parsed.refused)
+    if parsed.error or code != 0 or not text:
+        tail = " | ".join(stderr.strip().splitlines()[-3:])
+        error = parsed.error or (f"codex exited {code}: {tail or 'no output'}" if code else "Codex gave no answer")
+        return Report("", parsed.session, error[:500], None, parsed.refused, "codex", tokens)
+    return Report(text, parsed.session, None, None, parsed.refused, "codex", tokens)
+
+
+def run_agent(cfg: dict[str, Any], prompt_for: Callable[[str], str], events_path: Path | None) -> Report:
+    """The investigation on whichever agent `agents-engine` names right now."""
+    agent = engine.engine()
+    if agent == "codex":
+        return run_codex(cfg, prompt_for("codex"), events_path)
+    return run_claude(cfg, prompt_for("claude"), events_path)
+
+
 # --------------------------------------------------------------------------- the runner
 
 
@@ -511,12 +639,20 @@ def headline(pages: Sequence[Page]) -> str:
     return f"📟 datadog paged you at {pacific(pages[0].at)}: {shown}\nlooking into it rn"
 
 
+def resume_command(agent: str, session_id: str) -> str:
+    if agent == "codex":
+        return f"cd ~/dev/envoyai-backend && codex resume {session_id}"
+    return f"cd ~/dev/envoyai-backend && claude --resume {session_id}"
+
+
 def report_footer(report: Report) -> str:
     parts = []
     if report.session_id:
-        parts.append(f"to pick up the follow-ups on your laptop: `cd ~/dev/envoyai-backend && claude --resume {report.session_id}`")
+        parts.append(f"to pick up the follow-ups on your laptop: `{resume_command(report.agent, report.session_id)}`")
     if report.cost_usd is not None:
         parts.append(f"${report.cost_usd:.2f}")
+    if report.tokens is not None:
+        parts.append(f"{report.tokens:,} tokens")
     return "\n\n" + " · ".join(parts) if parts else ""
 
 
@@ -635,12 +771,17 @@ class Runner:
                 write_json(folder / "run.json", record)
             if post:
                 notify("Datadog paged you", record["headline"].replace("\n", " · "))
-            report = run_claude(self.cfg, build_prompt(pages, skill_text()), folder / "events.jsonl")
+            skill = skill_text()
+            record["engine"] = engine.describe()
+            write_json(folder / "run.json", record)
+            report = run_agent(self.cfg, lambda agent: build_prompt(pages, skill, agent), folder / "events.jsonl")
             record.update(
                 status="failed" if report.error else "done",
                 error=report.error,
+                agent=report.agent,
                 session_id=report.session_id,
                 cost_usd=report.cost_usd,
+                tokens=report.tokens,
                 refused=report.refused,
                 finished_at=time.time(),
             )
@@ -664,6 +805,7 @@ class Runner:
             "last_error": self.last_error,
             "pending": len(self.pending),
             "current": self.current,
+            "engine": engine.describe(),
             "heartbeat_at": time.time(),
         }
 
@@ -756,9 +898,15 @@ def cmd_check(cfg: dict[str, Any]) -> int:
         except Exception as exc:  # noqa: BLE001
             ok = False
             print(f"slack DM: {exc}")
-    version = subprocess.run(["claude", "--version"], capture_output=True, text=True)
-    ok &= version.returncode == 0
-    print(f"claude: {version.stdout.strip() or version.stderr.strip()}")
+    print(f"engine: {engine.describe()} (switch with agents-engine)")
+    for name, binary in (("claude", "claude"), ("codex", engine.CODEX)):
+        try:
+            version = subprocess.run([binary, "--version"], capture_output=True, text=True)
+        except OSError as exc:
+            version = subprocess.CompletedProcess([binary], 1, "", str(exc))
+        if name == engine.engine():
+            ok &= version.returncode == 0
+        print(f"{name}: {version.stdout.strip() or version.stderr.strip()}")
     print(f"on-call skill: {'found' if SKILL_FILE.exists() else 'MISSING'}")
     ok &= SKILL_FILE.exists()
     return 0 if ok else 1
@@ -792,7 +940,7 @@ def cmd_once(cfg: dict[str, Any], hours: float, post: bool) -> int:
     report = runner.investigate(pages, post=post)
     print(report.error or report.text)
     if report.session_id:
-        print(f"\nclaude --resume {report.session_id}")
+        print(f"\n{resume_command(report.agent, report.session_id)}")
     return 1 if report.error else 0
 
 

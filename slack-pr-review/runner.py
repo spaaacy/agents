@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from contextlib import contextmanager
+import importlib.util
 from decimal import Decimal
 import fcntl
 import hashlib
@@ -21,6 +22,17 @@ LOG = logging.getLogger("slack-pr-review")
 ROOT = Path(__file__).resolve().parent
 REVIEWERS = ("codex", "claude")
 SKILLS = Path.home() / ".agents" / "skills"
+
+
+def _load_engine():
+    """~/.agents/engine/engine.py: the one switch between Codex and Claude for every background tool."""
+    spec = importlib.util.spec_from_file_location("agents_engine", Path.home() / ".agents" / "engine" / "engine.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+ENGINE = _load_engine()
 CLAUDE_SETTINGS = ROOT / "claude-settings.json"
 MENTION = re.compile(r"<@([A-Z0-9]+)(?:\|[^>]+)?>")
 PR = re.compile(r"https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/pull/([1-9][0-9]*)(?=[/#?<>|\s)]|$)")
@@ -204,9 +216,8 @@ def database(root: Path) -> sqlite3.Connection:
 
 
 def current_reviewer(cfg: dict, db) -> str:
-    """Who reviews the next PR: the `reviewer` command's choice, else config.json, else Codex."""
-    choice = setting(db, "reviewer") or cfg.get("reviewer") or "codex"
-    return choice if choice in REVIEWERS else "codex"
+    """Who reviews the next PR: the engine every background tool runs on (`agents-engine`), read per review."""
+    return ENGINE.engine()
 
 
 def setting(db, key, fallback=None):
@@ -391,7 +402,9 @@ async def codex_review(cfg, pr, directory, db, key):
         "Complete the review in this turn; a later turn will run $post-review on the result.")
     # Keep normal Codex protections. Automatic approval review may permit needed reads;
     # no approval prompts are auto-answered by this program.
+    choice = ENGINE.current()["codex"]
     common = [cfg["codex"], "exec", "--approve-for-me", "--json", "--color", "never",
+              "-m", choice["model"], "-c", f'model_reasoning_effort="{choice["effort"]}"',
               "-c", "sandbox_workspace_write.network_access=true"]
     await command(common + ["-C", str(checkout), "-o", str(directory / "review.md"), prompt],
                   cwd=checkout, output=directory / "review.events.jsonl", timeout=cfg["review_timeout_seconds"])
@@ -443,6 +456,8 @@ def claude_command(cfg, session: str | None, schema: dict | None = None) -> list
            "--add-dir", str(SKILLS)]
     if cfg.get("claude_model"):
         cmd += ["--model", cfg["claude_model"]]
+    else:
+        cmd += ENGINE.claude_model_args()
     if session:
         cmd += ["--resume", session]
     if schema is not None:
@@ -630,7 +645,7 @@ async def main():
     enable.add_argument("--authorize-comment-posting", action="store_true")
     sub.add_parser("disable")
     sub.add_parser("status")
-    pick = sub.add_parser("reviewer", help="show or set who reviews the next PR")
+    pick = sub.add_parser("reviewer", help="show or set the engine (switches every background tool, like agents-engine)")
     pick.add_argument("name", nargs="?", choices=REVIEWERS)
     retry = sub.add_parser("retry")
     retry.add_argument("key")
@@ -654,11 +669,11 @@ async def main():
         print("Disabled; an in-flight review may finish, but cannot post")
     elif args.action == "reviewer":
         if args.name:
-            with db:
-                put_setting(db, "reviewer", args.name)
-            print(f"Next reviews: {args.name}. A review already running finishes with its own reviewer.")
+            ENGINE.choose(args.name)
+            print(f"Background agents now run on {ENGINE.describe()}, PR reviews included. "
+                  "A review already running finishes with its own reviewer.")
         else:
-            print(current_reviewer(cfg, db))
+            print(ENGINE.describe())
     elif args.action == "status":
         print(json.dumps({"settings": dict(db.execute("SELECT key,value FROM settings")),
             "reviewer": current_reviewer(cfg, db),

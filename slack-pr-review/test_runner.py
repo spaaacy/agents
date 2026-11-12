@@ -190,17 +190,16 @@ class Publishing(unittest.IsolatedAsyncioTestCase):
 
 
 class Reviewer(unittest.TestCase):
-    def test_switch_is_stored_and_defaults_to_codex(self):
+    def test_reviewer_follows_the_shared_engine_switch(self):
         with tempfile.TemporaryDirectory() as root:
             db = runner.database(Path(root))
-            self.assertEqual(runner.current_reviewer(CFG, db), 'codex')
-            self.assertEqual(runner.current_reviewer({**CFG, 'reviewer': 'claude'}, db), 'claude')
-            with db:
-                runner.put_setting(db, 'reviewer', 'claude')
-            self.assertEqual(runner.current_reviewer(CFG, db), 'claude')
-            with db:
-                runner.put_setting(db, 'reviewer', 'something-else')
-            self.assertEqual(runner.current_reviewer(CFG, db), 'codex')
+            choice_file = Path(root) / 'engine.json'
+            with patch.object(runner.ENGINE, 'CHOICE_FILE', choice_file):
+                self.assertEqual(runner.current_reviewer(CFG, db), 'codex')
+                runner.ENGINE.choose('claude')
+                self.assertEqual(runner.current_reviewer(CFG, db), 'claude')
+                choice_file.write_text('{"engine": "something-else"}')
+                self.assertEqual(runner.current_reviewer(CFG, db), 'codex')
             columns = {row['name'] for row in db.execute('PRAGMA table_info(jobs)')}
             self.assertIn('reviewer', columns)
 

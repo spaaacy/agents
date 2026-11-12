@@ -29,6 +29,18 @@ def _claude_view():
 claude_view = _claude_view()
 
 
+def _engine():
+    """The shared Codex/Claude switch (~/.agents/engine/engine.py), for the status line."""
+    path = Path.home() / ".agents" / "engine" / "engine.py"
+    spec = importlib.util.spec_from_file_location("agents_engine", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+ENGINE = _engine()
+
+
 def clean(value: object) -> str:
     # External text must not be interpreted as terminal control sequences.
     value = re.sub(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)", "", str(value))
@@ -194,7 +206,7 @@ def watch(root: Path, once: bool = False) -> None:
         if health != last_health or now - last_heartbeat >= 60:
             mode = ("auto-post COMMENT reviews" if auto_post else "draft only") if enabled else "disabled"
             scan_time = time.strftime("%H:%M:%S", time.localtime(scanned)) if scanned else "never"
-            reviewer = settings.get("reviewer") or json.loads((root / "config.json").read_text()).get("reviewer", "codex")
+            reviewer = ENGINE.describe()
             emit(f"#devs — {mode}; reviewing with {reviewer}; {queued} queued, {running} running; "
                  f"last successful scan {scan_time}."
                  + (" Scan is overdue; worker may be stopped or recovering." if stale and enabled else "")

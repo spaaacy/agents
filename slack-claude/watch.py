@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
-"""Read-only terminal view of the Slack Claude bot: its heartbeat, each request, and Claude's work as it streams."""
+"""Read-only terminal view of the Slack bot: its heartbeat, each request, and the agent's work (Codex or Claude) as it streams."""
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent / "state"
+ENGINE_FILE = Path.home() / ".agents" / "engine" / "engine.py"
+CODEX_EVENTS = {"thread.started", "turn.started", "turn.completed", "turn.failed", "error", "item.started", "item.completed"}
 ACTIVE = {"queued", "answering"}
 STALE_AFTER = 45  # seconds without a heartbeat before the bot reads as stopped
 TEXT_LIMIT = 700
@@ -46,9 +50,65 @@ def describe_tool(name: str, args: dict[str, Any]) -> str:
     return f"Using {name}: {short(json.dumps(args), 160)}"
 
 
-def render(event: dict[str, Any]) -> list[str]:
-    """What one Claude stream event is worth showing; thinking and raw tool output are left out."""
+def _engine() -> Any:
+    """~/.agents/engine/engine.py, loaded by path; None when it cannot be read (the view still works)."""
+    loaded = sys.modules.get("agents_engine")
+    if loaded is not None:
+        return loaded
+    try:
+        spec = importlib.util.spec_from_file_location("agents_engine", ENGINE_FILE)
+        module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+        sys.modules["agents_engine"] = module
+        spec.loader.exec_module(module)  # type: ignore[union-attr]
+        return module
+    except Exception:  # noqa: BLE001 - a missing engine only drops the header's agent name
+        sys.modules.pop("agents_engine", None)
+        return None
+
+
+def agent_name() -> str:
+    engine = _engine()
+    return engine.describe() if engine else "an unknown agent"
+
+
+def render_codex(event: dict[str, Any]) -> list[str]:
+    """What one Codex --json event is worth showing; reasoning and raw command output are left out."""
     kind = event.get("type")
+    item = event.get("item") if isinstance(event.get("item"), dict) else {}
+    item_kind = item.get("type")
+    if kind == "thread.started":
+        return [f"Codex session {event.get('thread_id', '?')}"]
+    if kind == "item.started" and item_kind == "command_execution":
+        return [f"Running: {short(item.get('command', ''), 300)}"]
+    if kind == "item.started" and item_kind == "mcp_tool_call":
+        return [f"Calling: {item.get('server', '?')}.{item.get('tool', '?')} {short(json.dumps(item.get('arguments') or {}), 160)}"]
+    if kind == "item.completed" and item_kind == "agent_message" and str(item.get("text", "")).strip():
+        return [f"Codex: {short(item['text'])}"]
+    if kind == "item.completed" and item_kind == "command_execution":
+        if item.get("status") == "completed" and item.get("exit_code") in (0, None):
+            return []
+        output = next((line for line in str(item.get("aggregated_output") or "").splitlines() if line.strip()), "")
+        exit_code = item.get("exit_code")
+        return [f"Tool refused or failed: {short(item.get('command', ''), 120)}"
+                + (f" (exit {exit_code})" if exit_code is not None else "") + (f": {short(output, 160)}" if output else "")]
+    if kind == "item.completed" and item_kind == "mcp_tool_call" and item.get("error"):
+        error = item["error"].get("message") if isinstance(item["error"], dict) else item["error"]
+        return [f"Tool refused or failed: {item.get('server', '?')}.{item.get('tool', '?')}: {short(error, 200)}"]
+    if kind == "turn.completed":
+        usage = event.get("usage") or {}
+        tokens = int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
+        return [f"Codex done, {tokens:,} tokens"]
+    if kind in ("turn.failed", "error"):
+        error = event.get("error") if isinstance(event.get("error"), dict) else event
+        return [f"Codex failed: {short(error.get('message') or error, 300)}"]
+    return []
+
+
+def render(event: dict[str, Any]) -> list[str]:
+    """What one agent event is worth showing, Claude's stream-json or Codex's --json; thinking and raw tool output are left out."""
+    kind = event.get("type")
+    if kind in CODEX_EVENTS:
+        return render_codex(event)
     if kind == "system" and event.get("subtype") == "init":
         return [f"Claude session {event.get('session_id', '?')}"]
     if kind == "assistant":
@@ -126,14 +186,20 @@ def summary(request: dict[str, Any]) -> str:
         lines.append(f"Request: {request['mention_url']}")
     if request.get("error"):
         lines.append(f"Error: {request['error']}")
+    refused = f", {request['refused']} tool calls refused" if request.get("refused") else ""
     if request.get("cost_usd") is not None:
-        lines.append(f"Cost: ${request['cost_usd']:.2f}" + (f", {request['refused']} tool calls refused" if request.get("refused") else ""))
+        lines.append(f"Cost: ${request['cost_usd']:.2f}{refused}")
+    elif request.get("tokens") is not None:
+        lines.append(f"Tokens: {request['tokens']:,}{refused}")
     if request.get("session_id"):
-        lines.append(f"Open the conversation here: claude --resume {request['session_id']}")
+        if request.get("engine") == "codex":
+            lines.append(f"Open the conversation on the laptop: cd ~/dev/envoyai-backend && codex resume {request['session_id']}")
+        else:
+            lines.append(f"Open the conversation here: claude --resume {request['session_id']}")
     return "\n".join(lines)
 
 
-def health_line(status: dict[str, Any] | None, now: float) -> str:
+def health_line(status: dict[str, Any] | None, now: float, agent: str | None = None) -> str:
     if status is None:
         return "Bot not started yet (no heartbeat). It starts at login; see README.md."
     beat = float(status.get("heartbeat_at", 0))
@@ -142,14 +208,15 @@ def health_line(status: dict[str, Any] | None, now: float) -> str:
     connection = "connected to Slack" if status.get("connected") else "reconnecting to Slack"
     dms = "answers in other DMs on" if status.get("dm_as_user") else "answers in other DMs off"
     busy = f"answering {status['current']}" if status.get("current") else "idle"
-    return f"@claude-aakif — {connection}; {busy}; {status.get('queued', 0)} queued; {dms}."
+    return f"@claude-aakif on {agent or agent_name()} — {connection}; {busy}; {status.get('queued', 0)} queued; {dms}."
 
 
 def watch(root: Path, once: bool = False) -> None:
-    print("\nSLACK → CLAUDE (@claude-aakif)\n", flush=True)
+    print("\nSLACK → AGENT (@claude-aakif)\n", flush=True)
     print(
-        "Live view of the Slack Claude bot. Closing this window only closes the view; the bot keeps running.\n"
-        "Shows each request, what Claude reads and runs, and the answer's link. Ctrl-C closes this view.\n",
+        "Live view of the Slack bot. Closing this window only closes the view; the bot keeps running.\n"
+        "Shows each request, what the agent (Codex or Claude, per agents-engine) reads and runs, and the answer's link.\n"
+        "Ctrl-C closes this view.\n",
         flush=True,
     )
     known: dict[str, tuple[Any, ...]] = {}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Answer Aakif's Slack requests with Claude Code running on this Mac.
+"""Answer Aakif's Slack requests with Codex or Claude Code running on this Mac.
 
 A Slack app in Socket Mode delivers events over a websocket the bot opens:
 nothing is polled and nothing on this Mac is reachable from the internet. Only
@@ -12,8 +12,12 @@ messages from the owner in config.json are answered:
   name, marked "🤖 claude:", through the owner's user token. Optional; off
   until that token is in the Keychain.
 
-Each Slack thread maps to one Claude Code session, so a follow-up in the
-thread resumes that conversation.
+Each Slack thread maps to one agent session, so a follow-up in the thread
+resumes that conversation. Which agent answers is ~/.agents/engine's choice
+(`agents-engine codex` or `agents-engine claude`), read before every request.
+
+Codex runs from the engine's locked-down home: every file read-only, nothing
+ever approved, and background.rules refusing git push, gh writes and az.
 
 Claude runs read-only. None of the user's saved Claude settings are loaded
 (they allow pushes, commits and ticket edits); only config.json's allow list
@@ -27,8 +31,8 @@ shows both live.
 
 Commands:
   bot.py run             listen to Slack (what the LaunchAgent runs)
-  bot.py check           confirm tokens, Slack auth and the claude CLI; posts nothing
-  bot.py ask "<text>"    put one question to Claude with the bot's limits and print the answer
+  bot.py check           confirm tokens, Slack auth and the agent CLIs; posts nothing
+  bot.py ask "<text>"    put one question to the current agent with the bot's limits and print the answer
 """
 
 from __future__ import annotations
@@ -36,6 +40,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import html
+import importlib.util
 import json
 import logging
 import os
@@ -61,12 +66,16 @@ STATUS_FILE = STATE / "status.json"
 MCP_FILE = STATE / "mcp.json"
 LOG_FILE = STATE / "bot.log"
 CLAUDE_JSON = Path.home() / ".claude.json"
+ENGINE_FILE = Path.home() / ".agents" / "engine" / "engine.py"
+CODEX_ANSWER = "codex-answer.txt"  # Codex's last message, beside the request's events
+CODEX_SESSION_PREFIX = "codex:"  # a thread's stored session id says which agent it belongs to
 
 KEYCHAIN_BOT_TOKEN = "slack-claude-bot-token"
 KEYCHAIN_APP_TOKEN = "slack-claude-app-token"
 KEYCHAIN_USER_TOKEN = "slack-claude-user-token"
 
 REPLY_PREFIX = "🤖 claude: "  # marks an answer posted under the owner's name
+REPLY_PREFIXES = {"claude": REPLY_PREFIX, "codex": "🤖 codex: "}
 MAX_REPLY_CHARS = 11_000  # chat.postMessage markdown_text takes 12,000
 MAX_CONTEXT_MESSAGES = 60
 MAX_MESSAGE_CHARS = 4_000
@@ -120,6 +129,45 @@ needed that was refused, the pg-readonly server, a skill or rule in \
 ~/.agents), end the answer with one short line to him naming the problem and \
 the fix you'd suggest. You cannot change it yourself.
 """
+
+CODEX_CHECKING = """\
+Checking things: every file is read-only here, so `git fetch` cannot update \
+the checkouts and origin/* is as of their last fetch on this Mac. When the \
+answer depends on GitHub now, ask gh (`gh pr view`, `gh pr checks`, `gh run \
+view`). Run git as `git -C <checkout> <command>`; the checkouts are \
+~/dev/envoyai-backend, ~/dev/envoyai-web, ~/dev/envoyai-chrome-plugin and \
+~/dev/envoyai-chat-ui. A change is live when its commit is on \
+origin/production (staging: origin/staging): check with `git -C <checkout> \
+merge-base --is-ancestor <sha> origin/production`, or with gh when the local \
+refs may be behind. Commands that write anywhere (git push, gh api, PR and \
+issue writes) are refused; never try to get around that.
+"""
+
+
+def system_prompt(name: str) -> str:
+    """The bot's instructions for one agent: Claude's as written, Codex's with its own name and checks."""
+    if name != "codex":
+        return SYSTEM_PROMPT
+    text = SYSTEM_PROMPT.replace("You're Claude,", "You're Codex,", 1)
+    head, rest = text.split("Checking things:", 1)
+    return head + CODEX_CHECKING + "\n" + rest.split("\n\n", 1)[1]
+
+
+def _load_engine() -> Any:
+    """~/.agents/engine/engine.py: which agent answers, and the locked-down Codex setup. Loaded by path."""
+    loaded = sys.modules.get("agents_engine")
+    if loaded is not None:
+        return loaded
+    spec = importlib.util.spec_from_file_location("agents_engine", ENGINE_FILE)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {ENGINE_FILE}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["agents_engine"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+engine = _load_engine()
 
 log = logging.getLogger("slack-claude")
 
@@ -244,7 +292,8 @@ def render_text(text: str, names: Callable[[str], str]) -> str:
 def reply_detector(mention: Mention, bot_user_id: str, owner: str) -> Callable[[dict[str, Any]], bool]:
     """Recognises the answers already in a conversation: the bot's, or the owner's marked ones."""
     if mention.as_user:
-        return lambda msg: msg.get("user") == owner and str(msg.get("text", "")).startswith(REPLY_PREFIX.strip())
+        marks = tuple(prefix.strip() for prefix in REPLY_PREFIXES.values())
+        return lambda msg: msg.get("user") == owner and str(msg.get("text", "")).startswith(marks)
     return lambda msg: msg.get("user") == bot_user_id
 
 
@@ -366,6 +415,7 @@ def claude_command(cfg: dict[str, Any], session_id: str | None, mcp_path: Path |
         cmd += ["--mcp-config", str(mcp_path)]
     if session_id:
         cmd += ["--resume", session_id]
+    cmd += engine.claude_model_args()
     # Takes every following argument, so it stays last.
     cmd += ["--allowedTools", *cfg["allowed_tools"]]
     return cmd
@@ -373,24 +423,29 @@ def claude_command(cfg: dict[str, Any], session_id: str | None, mcp_path: Path |
 
 @dataclass(frozen=True)
 class ClaudeResult:
+    """One agent run's outcome, Claude's or Codex's (the name predates Codex)."""
+
     text: str
     session_id: str | None
     error: str | None = None
     cost_usd: float | None = None
     refused: int = 0
+    tokens: int | None = None  # Codex reports tokens, not dollars
 
 
 LineHandler = Callable[[str], None]
-Execute = Callable[[list[str], str, Path, int, LineHandler], tuple[int, str]]
+Execute = Callable[..., tuple[int, str]]  # (cmd, prompt, cwd, timeout, on_line[, env]) -> (exit code, stderr)
 
 
-def stream_process(cmd: list[str], prompt: str, cwd: Path, timeout: int, on_line: LineHandler) -> tuple[int, str]:
+def stream_process(
+    cmd: list[str], prompt: str, cwd: Path, timeout: int, on_line: LineHandler, env: dict[str, str] | None = None
+) -> tuple[int, str]:
     """Run a command, hand each stdout line over as it arrives; (exit code, stderr).
 
     Raises subprocess.TimeoutExpired after killing a run that outlives the timeout.
     """
     proc = subprocess.Popen(
-        cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=cwd
+        cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=cwd, env=env
     )
     killed = threading.Event()
 
@@ -473,6 +528,77 @@ def run_claude(
     return ClaudeResult(str(final.get("result") or "").strip(), final.get("session_id"), None, cost, refused)
 
 
+def codex_preamble() -> str:
+    """What Claude gets through --append-system-prompt, said once at the start of a new Codex session."""
+    rules = "\n\n".join(part for part in (system_prompt("codex"), voice_rules()) if part)
+    return f"<instructions>\n{rules}\n</instructions>\n\n"
+
+
+def run_codex(
+    cfg: dict[str, Any],
+    prompt: str,
+    session_id: str | None,
+    events_path: Path | None = None,
+    execute: Execute = stream_process,
+) -> ClaudeResult:
+    """One Codex turn from the engine's locked-down home: a new session, or ``session_id`` resumed."""
+    STATE.mkdir(exist_ok=True)
+    home = engine.prepare_codex_home(list(cfg.get("mcp_servers", [])) + ["linear", "datadog"])
+    output = (events_path.parent if events_path else STATE) / CODEX_ANSWER
+    output.unlink(missing_ok=True)
+    workdir = Path(cfg["workdir"]).expanduser()
+    timeout = cfg.get("timeout_seconds", 900)
+    if session_id is None:
+        prompt = codex_preamble() + prompt
+    seen = engine.CodexEvents()
+    events = events_path.open("a") if events_path else None
+
+    def on_line(line: str) -> None:
+        if events:
+            events.write(line if line.endswith("\n") else line + "\n")
+            events.flush()
+        seen.feed(line)
+
+    try:
+        code, stderr = execute(
+            engine.codex_command(workdir, output, session=session_id), prompt, workdir, timeout, on_line,
+            engine.codex_env(home),
+        )
+    except subprocess.TimeoutExpired:
+        return ClaudeResult("", session_id, f"Codex did not finish within {timeout} seconds")
+    finally:
+        if events:
+            events.close()
+    session = seen.session or session_id
+    text = engine.final_text(output, seen)
+    tokens = seen.tokens()
+    log.info("codex finished: session %s, %s tokens, %d commands refused", session, tokens, seen.refused)
+    if code != 0 or seen.error or not text:
+        tail = " | ".join(stderr.strip().splitlines()[-3:])
+        detail = seen.error or tail or "no output"
+        return ClaudeResult("", session, f"codex exited {code}: {detail}" if code else detail, None, seen.refused, tokens)
+    return ClaudeResult(text, session, None, None, seen.refused, tokens)
+
+
+RUNNERS: dict[str, Callable[..., ClaudeResult]] = {"claude": run_claude, "codex": run_codex}
+LOST_SESSION = ("no conversation found", "no rollout found")  # Claude's and Codex's "that session is gone"
+
+
+def stored_session(name: str, session_id: str) -> str:
+    """A session id as kept for a thread: Codex's marked, Claude's bare (as before Codex)."""
+    return CODEX_SESSION_PREFIX + session_id if name == "codex" else session_id
+
+
+def session_for(name: str, stored: str | None) -> str | None:
+    """The thread's session when it belongs to ``name``; None when there is none or another agent holds it."""
+    if not stored:
+        return None
+    owner = "codex" if stored.startswith(CODEX_SESSION_PREFIX) else "claude"
+    if owner != name:
+        return None
+    return stored.removeprefix(CODEX_SESSION_PREFIX)
+
+
 def write_json(path: Path, data: dict[str, Any]) -> None:
     """Replace a JSON file in one step, so a reader never sees half of it."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -482,7 +608,7 @@ def write_json(path: Path, data: dict[str, Any]) -> None:
 
 
 class Sessions:
-    """Which Claude session answers which Slack thread; kept across restarts."""
+    """Which agent session answers which Slack thread; kept across restarts. Codex ids carry "codex:"."""
 
     def __init__(self, path: Path = SESSIONS_FILE) -> None:
         self.path = path
@@ -571,6 +697,8 @@ class Bot:
         run: Callable[..., ClaudeResult] = run_claude,
         user_web: Any = None,
         bot_dm: str | None = None,
+        run_codex: Callable[..., ClaudeResult] = run_codex,
+        current_engine: Callable[[], str] | None = None,
     ) -> None:
         self.web = web
         self.user_web = user_web
@@ -579,7 +707,8 @@ class Bot:
         self.bot_user_id = bot_user_id
         self.bot_dm = bot_dm
         self.names = Names(web)
-        self.run = run
+        self.runners = {"claude": run, "codex": run_codex}
+        self.current_engine = current_engine or engine.engine
 
     def _client(self, mention: Mention) -> Any:
         return self.user_web if mention.as_user else self.web
@@ -598,20 +727,22 @@ class Bot:
         except Exception:  # noqa: BLE001 - a link is a courtesy, never a failure
             return None
 
-    def _post(self, mention: Mention, text: str) -> str | None:
+    def _post(self, mention: Mention, text: str, prefix: str = REPLY_PREFIX) -> str | None:
         """Post an answer in the request's thread; the first message's ts."""
         first = None
         for index, chunk in enumerate(chunk_reply(text)):
             if mention.as_user and index == 0:
-                chunk = REPLY_PREFIX + chunk
+                chunk = prefix + chunk
             response = self._client(mention).chat_postMessage(
                 channel=mention.channel, thread_ts=mention.thread_ts, markdown_text=chunk, unfurl_links=False
             )
             first = first or response.get("ts")
         return first
 
-    def _answer(self, mention: Mention, events: Path | None) -> ClaudeResult:
-        session = self.sessions.get(mention.key)
+    def _answer(self, mention: Mention, name: str, events: Path | None) -> ClaudeResult:
+        # A thread another agent started is answered fresh: one agent cannot resume the other's session.
+        session = session_for(name, self.sessions.get(mention.key))
+        run = self.runners[name]
         conversation = fetch_conversation(self._client(mention), mention, self.bot_dm)
         owner = self.cfg["owner_user_id"]
         is_reply = reply_detector(mention, self.bot_user_id, owner)
@@ -621,10 +752,10 @@ class Bot:
                 mention, conversation, self.bot_user_id, self.names, resumed=resumed, is_reply=is_reply
             )
 
-        result = self.run(self.cfg, prompt(session is not None), session, events)
-        if result.error and session and "no conversation found" in result.error.lower():
+        result = run(self.cfg, prompt(session is not None), session, events)
+        if result.error and session and any(gone in result.error.lower() for gone in LOST_SESSION):
             # The saved session is gone (cleared or expired): start the thread over.
-            result = self.run(self.cfg, prompt(False), None, events)
+            result = run(self.cfg, prompt(False), None, events)
         return result
 
     def handle(self, mention: Mention, record: Path | None = None) -> None:
@@ -632,8 +763,12 @@ class Bot:
         if record:
             RequestLog.update(record, status="answering", started_at=started, mention_url=self._permalink(mention, mention.ts))
         self._react(mention, "eyes")
+        name = "codex"
         try:
-            result = self._answer(mention, record / "events.jsonl" if record else None)
+            name = self.current_engine()
+            if record:
+                RequestLog.update(record, engine=name)
+            result = self._answer(mention, name, record / "events.jsonl" if record else None)
         except Exception as exc:  # noqa: BLE001 - every failure is reported in the thread
             log.exception("request failed")
             result = ClaudeResult("", None, f"{type(exc).__name__}: {exc}")
@@ -642,17 +777,20 @@ class Bot:
             "finished_at": time.time(),
             "session_id": result.session_id,
             "cost_usd": result.cost_usd,
+            "tokens": result.tokens,
             "refused": result.refused,
+            "engine": name,
         }
+        prefix = REPLY_PREFIXES.get(name, REPLY_PREFIX)
         try:
             if result.error:
-                reply_ts = self._post(mention, f"Couldn't answer this one: {result.error}")
+                reply_ts = self._post(mention, f"Couldn't answer this one: {result.error}", prefix)
                 self._react(mention, "x")
                 outcome.update(status="failed", error=result.error)
             else:
                 if result.session_id:
-                    self.sessions.set(mention.key, result.session_id)
-                reply_ts = self._post(mention, result.text)
+                    self.sessions.set(mention.key, stored_session(name, result.session_id))
+                reply_ts = self._post(mention, result.text, prefix)
                 self._react(mention, "white_check_mark")
                 outcome.update(status="answered")
             if reply_ts:
@@ -809,9 +947,17 @@ def cmd_check(cfg: dict[str, Any]) -> int:
             print(f"{KEYCHAIN_USER_TOKEN}: {'found, belongs to the owner' if owner_ok else 'NOT the owner (DM answers off)'}")
         except Exception as exc:  # noqa: BLE001
             print(f"{KEYCHAIN_USER_TOKEN}: auth failed: {exc}")
-    version = subprocess.run(["claude", "--version"], capture_output=True, text=True)
-    ok &= version.returncode == 0
-    print(f"claude: {version.stdout.strip() or version.stderr.strip()}")
+    current = engine.engine()
+    print(f"agent: {engine.describe()} (switch with agents-engine)")
+    for name, binary in (("claude", "claude"), ("codex", engine.CODEX)):
+        try:
+            version = subprocess.run([binary, "--version"], capture_output=True, text=True)
+            found, said = version.returncode == 0, version.stdout.strip() or version.stderr.strip()
+        except OSError as exc:
+            found, said = False, str(exc)
+        if name == current:
+            ok &= found  # only the agent in use has to be there
+        print(f"{name}: {said}" + ("" if found else " (MISSING)"))
     servers = mcp_config(cfg.get("mcp_servers", []))["mcpServers"]
     missing = [name for name in cfg.get("mcp_servers", []) if name not in servers]
     print(f"mcp servers: {', '.join(servers) or 'none'}" + (f" (missing: {', '.join(missing)})" if missing else ""))
@@ -819,7 +965,8 @@ def cmd_check(cfg: dict[str, Any]) -> int:
 
 
 def cmd_ask(cfg: dict[str, Any], text: str) -> int:
-    result = run_claude(cfg, f"Aakif's request:\n{text}", None)
+    name = engine.engine()
+    result = RUNNERS[name](cfg, f"Aakif's request:\n{text}", None)
     print(result.error or result.text)
     return 1 if result.error else 0
 

@@ -1,0 +1,3 @@
+#!/bin/sh
+# Pick Codex or Claude for the background tools (slack-claude, on-call-runner, slack-pr-review).
+exec /usr/bin/env python3 "$HOME/.agents/engine/engine.py" "$@"

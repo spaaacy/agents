@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only terminal view of the on-call runner: its heartbeat, each page it picked up, and Claude's work as it streams."""
+"""Read-only terminal view of the on-call runner: its heartbeat, each page it picked up, and the agent's work as it streams."""
 
 from __future__ import annotations
 
@@ -37,6 +37,8 @@ def health_line(status: dict[str, Any] | None, now: float) -> str:
         return f"Runner looks stopped: last heartbeat {time.strftime('%H:%M:%S', time.localtime(beat))}. Check state/launchd.log."
     shift = {True: "you're on call", False: "you're not on call, pages are ignored", None: "on-call status unknown"}
     parts = [shift[status.get("on_call")]]
+    if status.get("engine"):
+        parts.append(f"investigating on {status['engine']}")
     parts.append(f"investigating {status['current']}" if status.get("current") else "idle")
     if status.get("pending"):
         parts.append(f"{status['pending']} pages waiting")
@@ -51,10 +53,17 @@ def summary(run: dict[str, Any]) -> str:
         lines.append(f"Slack: {run['thread_url']}")
     if run.get("error"):
         lines.append(f"Error: {run['error']}")
+    if run.get("engine"):
+        lines.append(f"Agent: {run['engine']}")
     if run.get("cost_usd") is not None:
         lines.append(f"Cost: ${run['cost_usd']:.2f}")
+    if run.get("tokens") is not None:
+        lines.append(f"Tokens: {run['tokens']:,}")
     if run.get("session_id"):
-        lines.append(f"Open it here: claude --resume {run['session_id']}")
+        if run.get("agent") == "codex":
+            lines.append(f"Open it here: cd ~/dev/envoyai-backend && codex resume {run['session_id']}")
+        else:
+            lines.append(f"Open it here: claude --resume {run['session_id']}")
     return "\n".join(lines)
 
 
@@ -62,7 +71,7 @@ def watch(root: Path, once: bool = False) -> None:
     print("\nDATADOG PAGES → /on-call\n", flush=True)
     print(
         "Live view of the on-call runner. Closing this window only closes the view; the runner keeps going.\n"
-        "Shows each page it picks up, what Claude reads and runs, and the report's Slack link. Ctrl-C closes this view.\n",
+        "Shows each page it picks up, what the agent reads and runs, and the report's Slack link. Ctrl-C closes this view.\n",
         flush=True,
     )
     known: dict[str, tuple[Any, ...]] = {}

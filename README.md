@@ -46,6 +46,19 @@ The check reports `TOOLS AVAILABLE` only after observing callable tools, `ACTION
 
 For Slack account setup, open the app's **Plugins** tab, find **Slack**, install it if missing, and complete its account connection. From terminal Codex, run `codex`, then `/plugins`. Start a new chat after installation, then rerun the check. The checker cannot prove access to a specific private message or make tools appear in an already-open chat. Other direct server connections are outside this check's scope. See the [official plugin setup steps](https://learn.chatgpt.com/docs/plugins#install-and-use-a-plugin).
 
+## Background agents: Codex or Claude
+
+Three tools run agents on this Mac with nobody watching: `slack-claude` (answers Aakif in Slack), `on-call-runner` (investigates Datadog pages) and `slack-pr-review` (reviews PRs he is tagged on in #devs). One switch picks the agent for all three, read before every run, so it applies to the next request with no restart:
+
+```sh
+agents-engine                                            # what they run on now
+agents-engine codex                                      # Codex (gpt-6.1-sol, medium effort by default)
+agents-engine codex --model gpt-6.1-sol --effort medium  # change the Codex model or effort; kept for later switches
+agents-engine claude                                     # back to Claude
+```
+
+The choice is `state/engine.json` (not in git); with no file they run on Codex. `engine/engine.py` holds the switch and the Codex setup the bot and the on-call runner share: their Codex runs use their own home, `state/codex-home`, rebuilt before each run, which shares the login and the session store with `~/.codex` (so `codex resume <id>` works on the laptop) and nothing else. There every file is read-only, `~/.ssh` cannot be read, the network is on, nothing is ever approved, Linear offers only its read tools, and `engine/background.rules` refuses the commands that write somewhere else (git push and friends, `gh api`, PR and issue writes, `az`). The interactive Codex rules, which allow `git push` and commit, are not loaded. The rules match commands as written, so one built to dodge them (through `$(...)`, say) is held back only by the read-only files and the missing ssh keys. PR reviews keep their own Codex mode (normal protections with automatic approval review, in a throwaway checkout, because they run tests), with the chosen model and effort. `python3 -m unittest engine/test_engine.py` checks the switch and the home.
+
 ## Codex setup
 
 `codex/apply.py` adds `CLAUDE.md` as a fallback project instruction filename; `AGENTS.override.md` and `AGENTS.md` still take precedence. The default project instruction budget here is 128 KiB because the backend's `CLAUDE.md` exceeds Codex's 32 KiB default. Existing custom filenames and an explicitly configured budget are preserved. It also adds `~/dev/.claude/worktrees`, where every skill creates its worktrees, to `sandbox_workspace_write.writable_roots`, so Codex edits and runs tests there without asking each time, and turns on `sandbox_workspace_write.network_access`, so `gh`, `git push`/`fetch`, eval runs and `npm` stop asking (Aakif's call, 2026-11-06: those were about 450 of 1,138 asks in one session); `.git` stays read-only, so commits still ask. A running Codex session keeps the sandbox it started with: start a new one to pick these up. See the [official instruction discovery documentation](https://learn.chatgpt.com/docs/agent-configuration/agents-md).

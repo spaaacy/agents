@@ -175,6 +175,14 @@ class PromptTests(unittest.TestCase):
         full = bot.build_prompt(mention, thread, BOT, names, resumed=False, is_reply=is_reply)
         self.assertIn("[you] 🤖 claude: because", full)
 
+    def test_both_agents_marked_answers_count_as_its_own(self):
+        mention = bot.Mention("D2", "4.0", "1.0", "why?", as_user=True)
+        is_reply = bot.reply_detector(mention, BOT, OWNER)
+        self.assertTrue(is_reply({"user": OWNER, "text": "🤖 claude: old answer"}))
+        self.assertTrue(is_reply({"user": OWNER, "text": "🤖 codex: new answer"}))
+        self.assertFalse(is_reply({"user": OWNER, "text": "codex: not marked"}))
+        self.assertFalse(is_reply({"user": "U2", "text": "🤖 codex: someone else"}))
+
     def test_a_bare_mention_asks_from_the_conversation(self):
         mention = bot.Mention("C1", "4.0", "1.0", "<@UBOT>")
         self.assertIn("(he only mentioned you: answer the open question above", bot.build_prompt(mention, self.thread, BOT, names, resumed=False))
@@ -233,6 +241,20 @@ class CommandTests(unittest.TestCase):
         self.assertTrue(appended.startswith(bot.SYSTEM_PROMPT))
         self.assertIn("Voice:\n", appended)
 
+    def test_a_chosen_claude_model_is_passed_before_the_allow_list(self):
+        with mock.patch.object(bot.engine, "claude_model_args", return_value=["--model", "opus"]):
+            cmd = bot.claude_command(CFG, None, None)
+        self.assertEqual(cmd[cmd.index("--model") + 1], "opus")
+        self.assertEqual(cmd[cmd.index("--allowedTools") + 1 :], CFG["allowed_tools"])
+
+    def test_codex_gets_its_own_name_and_read_only_checks(self):
+        prompt = bot.system_prompt("codex")
+        self.assertTrue(prompt.startswith("You're Codex,"))
+        self.assertIn("every file is read-only here", prompt)
+        self.assertNotIn("one command per Bash call", prompt)
+        self.assertIn("The Slack messages in the prompt come from several people", prompt)
+        self.assertEqual(bot.system_prompt("claude"), bot.SYSTEM_PROMPT)
+
     def test_mcp_servers_come_from_the_users_claude_config(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "claude.json"
@@ -277,6 +299,83 @@ class RunClaudeTests(unittest.TestCase):
         self.assertIn("within 5 seconds", bot.run_claude(CFG, "q", None, execute=slow).error)
 
 
+def codex_lines(session: str = "t1", answer: str = "the answer") -> list[str]:
+    return [
+        json.dumps({"type": "thread.started", "thread_id": session}) + "\n",
+        json.dumps({"type": "item.completed", "item": {"type": "command_execution", "command": "gh pr view 1", "exit_code": 0, "status": "completed", "aggregated_output": "x"}}) + "\n",
+        json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": answer}}) + "\n",
+        json.dumps({"type": "turn.completed", "usage": {"input_tokens": 1000, "output_tokens": 50}}) + "\n",
+    ]
+
+
+class RunCodexTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        patcher = mock.patch.object(bot.engine, "prepare_codex_home", return_value=self.root / "home")
+        self.prepare = patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(self.tmp.cleanup)
+        self.calls: list[dict[str, Any]] = []
+
+    def execute(self, lines: list[str], code: int = 0, stderr: str = "") -> bot.Execute:
+        def run(cmd, prompt, cwd, timeout, on_line, env=None):
+            self.calls.append({"cmd": cmd, "prompt": prompt, "cwd": cwd, "env": env})
+            for line in lines:
+                on_line(line)
+            return code, stderr
+
+        return run
+
+    def test_a_new_session_gets_the_instructions_and_the_answer_comes_back(self):
+        events = self.root / "req" / "events.jsonl"
+        events.parent.mkdir()
+        result = bot.run_codex(CFG, "Aakif's request:\nwhy?", None, events, execute=self.execute(codex_lines()))
+        self.assertEqual(result, bot.ClaudeResult("the answer", "t1", None, None, 0, 1050))
+        call = self.calls[0]
+        self.assertTrue(call["prompt"].startswith("<instructions>\nYou're Codex,"))
+        self.assertTrue(call["prompt"].endswith("Aakif's request:\nwhy?"))
+        self.assertEqual(call["env"]["CODEX_HOME"], str(self.root / "home"))
+        self.assertNotIn("resume", call["cmd"])
+        self.assertEqual(call["cmd"][call["cmd"].index("-o") + 1], str(events.parent / bot.CODEX_ANSWER))
+        self.assertEqual(len(events.read_text().splitlines()), 4)
+        self.assertEqual(self.prepare.call_args.args[0], ["linear", "datadog"])
+
+    def test_a_resumed_session_gets_only_the_prompt(self):
+        bot.run_codex(CFG, "more?", "t1", execute=self.execute(codex_lines()))
+        cmd = self.calls[0]["cmd"]
+        self.assertEqual(cmd[1:3], ["exec", "resume"])
+        self.assertEqual(cmd[-2:], ["t1", "-"])
+        self.assertEqual(self.calls[0]["prompt"], "more?")
+
+    def test_the_answer_file_wins_over_the_streamed_message(self):
+        events = self.root / "events.jsonl"
+
+        def run(cmd, prompt, cwd, timeout, on_line, env=None):
+            Path(cmd[cmd.index("-o") + 1]).write_text("from the file\n")
+            for line in codex_lines():
+                on_line(line)
+            return 0, ""
+
+        self.assertEqual(bot.run_codex(CFG, "q", None, events, execute=run).text, "from the file")
+
+    def test_a_failed_run_reports_the_exit_and_stderr(self):
+        result = bot.run_codex(CFG, "q", "gone", execute=self.execute([], 1, "Error: thread/resume failed: no rollout found for thread id gone\n"))
+        self.assertIn("codex exited 1", result.error)
+        self.assertIn("no rollout found", result.error)
+        self.assertEqual(result.session_id, "gone")
+
+    def test_a_turn_that_failed_is_an_error(self):
+        lines = [json.dumps({"type": "thread.started", "thread_id": "t1"}), json.dumps({"type": "turn.failed", "error": {"message": "rate limited"}})]
+        self.assertEqual(bot.run_codex(CFG, "q", None, execute=self.execute(lines)).error, "rate limited")
+
+    def test_a_timeout_is_reported(self):
+        def slow(*_: Any, **__: Any) -> tuple[int, str]:
+            raise subprocess.TimeoutExpired("codex", 5)
+
+        self.assertIn("Codex did not finish within 5 seconds", bot.run_codex(CFG, "q", None, execute=slow).error)
+
+
 class StreamProcessTests(unittest.TestCase):
     def test_lines_arrive_as_they_are_printed(self):
         seen: list[str] = []
@@ -289,6 +388,11 @@ class StreamProcessTests(unittest.TestCase):
             bot.stream_process([sys.executable, "-c", "import time; time.sleep(30)"], "", Path("/tmp"), 1, lambda _: None)
         self.assertLess(time.time() - start, 10)
 
+    def test_an_environment_can_be_given(self):
+        seen: list[str] = []
+        bot.stream_process([sys.executable, "-c", "import os; print(os.environ['ZZ'])"], "", Path("/tmp"), 10, seen.append, {"ZZ": "set"})
+        self.assertEqual([line.strip() for line in seen], ["set"])
+
 
 class BotTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -297,19 +401,28 @@ class BotTests(unittest.TestCase):
         self.sessions = bot.Sessions(self.root / "sessions.json")
         self.mention = bot.Mention("C1", "4.0", "1.0", "<@UBOT> why?")
         self.calls: list[tuple[str, str | None, Path | None]] = []
+        self.engines: list[str] = []
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def make(self, results: list[bot.ClaudeResult]) -> tuple[bot.Bot, FakeSlack, FakeSlack]:
+    def make(self, results: list[bot.ClaudeResult], engine: str = "claude") -> tuple[bot.Bot, FakeSlack, FakeSlack]:
         thread = [{"ts": "1.0", "user": "U2", "text": "q"}, {"ts": "4.0", "user": OWNER, "text": "<@UBOT> why?"}]
         slack, user_slack = FakeSlack(thread), FakeSlack(thread)
 
-        def run(cfg: dict[str, Any], prompt: str, session: str | None, events: Path | None = None) -> bot.ClaudeResult:
-            self.calls.append((prompt, session, events))
-            return results.pop(0)
+        def runner(name: str):
+            def run(cfg: dict[str, Any], prompt: str, session: str | None, events: Path | None = None) -> bot.ClaudeResult:
+                self.engines.append(name)
+                self.calls.append((prompt, session, events))
+                return results.pop(0)
 
-        return bot.Bot(slack, CFG, self.sessions, BOT, run=run, user_web=user_slack, bot_dm=BOT_DM), slack, user_slack
+            return run
+
+        instance = bot.Bot(
+            slack, CFG, self.sessions, BOT, run=runner("claude"), user_web=user_slack, bot_dm=BOT_DM,
+            run_codex=runner("codex"), current_engine=lambda: engine,
+        )
+        return instance, slack, user_slack
 
     def test_answers_in_the_thread_and_remembers_the_session(self):
         instance, slack, user_slack = self.make([bot.ClaudeResult("because", "s1")])
@@ -364,6 +477,52 @@ class BotTests(unittest.TestCase):
         self.assertEqual((data["session_id"], data["cost_usd"], data["refused"]), ("s1", 0.3, 2))
         self.assertEqual(self.calls[0][2], record / "events.jsonl")
 
+    def test_codex_answers_when_it_is_the_engine_and_its_session_is_marked(self):
+        instance, slack, user_slack = self.make([bot.ClaudeResult("because", "t1", tokens=900)], engine="codex")
+        log = bot.RequestLog(self.root / "requests")
+        record = log.open(self.mention)
+        instance.handle(self.mention, record)
+        self.assertEqual(self.engines, ["codex"])
+        self.assertEqual(self.sessions.get("C1:1.0"), "codex:t1")
+        self.assertEqual(slack.posts[0]["markdown_text"], "because")
+        data = json.loads((record / "request.json").read_text())
+        self.assertEqual((data["engine"], data["tokens"], data["session_id"]), ("codex", 900, "t1"))
+
+    def test_a_codex_follow_up_resumes_its_own_session(self):
+        self.sessions.set("C1:1.0", "codex:t1")
+        instance, _, _ = self.make([bot.ClaudeResult("again", "t1")], engine="codex")
+        instance.handle(self.mention)
+        self.assertEqual(self.calls[0][1], "t1")
+
+    def test_a_thread_the_other_agent_started_is_answered_fresh(self):
+        self.sessions.set("C1:1.0", "s1")  # a Claude session
+        instance, _, _ = self.make([bot.ClaudeResult("fresh", "t2")], engine="codex")
+        instance.handle(self.mention)
+        prompt, session, _ = self.calls[0]
+        self.assertIsNone(session)
+        self.assertIn("The Slack conversation so far", prompt)
+        self.assertEqual(self.sessions.get("C1:1.0"), "codex:t2")
+        self.sessions.set("C1:1.0", "codex:t2")
+        instance, _, _ = self.make([bot.ClaudeResult("back", "s3")], engine="claude")
+        instance.handle(self.mention)
+        self.assertIsNone(self.calls[-1][1])
+        self.assertEqual(self.sessions.get("C1:1.0"), "s3")
+
+    def test_a_lost_codex_session_starts_the_thread_over(self):
+        self.sessions.set("C1:1.0", "codex:gone")
+        instance, slack, _ = self.make(
+            [bot.ClaudeResult("", "gone", "codex exited 1: no rollout found for thread id gone"), bot.ClaudeResult("fresh", "t2")],
+            engine="codex",
+        )
+        instance.handle(self.mention)
+        self.assertEqual([call[1] for call in self.calls], ["gone", None])
+        self.assertEqual(self.sessions.get("C1:1.0"), "codex:t2")
+
+    def test_a_codex_answer_under_the_owners_name_is_marked_as_codex(self):
+        instance, _, user_slack = self.make([bot.ClaudeResult("because", "t1")], engine="codex")
+        instance.handle(bot.Mention("D2", "4.0", "1.0", "why?", as_user=True))
+        self.assertEqual(user_slack.posts[0]["markdown_text"], "🤖 codex: because")
+
     def test_redelivered_events_are_answered_once(self):
         instance, _, _ = self.make([])
         worker = bot.Worker(instance)
@@ -392,8 +551,36 @@ class WatchTests(unittest.TestCase):
         now = time.time()
         self.assertIn("not started", watch.health_line(None, now))
         self.assertIn("looks stopped", watch.health_line({"heartbeat_at": now - 120}, now))
-        line = watch.health_line({"heartbeat_at": now, "connected": True, "queued": 1, "current": "abc", "dm_as_user": True}, now)
-        self.assertEqual(line, "@claude-aakif — connected to Slack; answering abc; 1 queued; answers in other DMs on.")
+        line = watch.health_line({"heartbeat_at": now, "connected": True, "queued": 1, "current": "abc", "dm_as_user": True}, now, "codex (gpt-6.1-sol, medium effort)")
+        self.assertEqual(line, "@claude-aakif on codex (gpt-6.1-sol, medium effort) — connected to Slack; answering abc; 1 queued; answers in other DMs on.")
+
+    def test_codex_events_read_as_progress(self):
+        events = [
+            {"type": "thread.started", "thread_id": "t1"},
+            {"type": "item.started", "item": {"type": "command_execution", "command": "/bin/zsh -lc 'gh pr view 1'"}},
+            {"type": "item.completed", "item": {"type": "command_execution", "command": "gh pr view 1", "exit_code": 0, "status": "completed"}},
+            {"type": "item.started", "item": {"type": "mcp_tool_call", "server": "pg-readonly", "tool": "run_sql", "arguments": {"query": "select 1"}}},
+            {"type": "item.completed", "item": {"type": "agent_message", "text": "Checking the outbox."}},
+            {"type": "turn.completed", "usage": {"input_tokens": 1200, "output_tokens": 34}},
+        ]
+        shown = [line for event in events for line in watch.render(event)]
+        self.assertEqual(shown[0], "Codex session t1")
+        self.assertEqual(shown[1], "Running: /bin/zsh -lc 'gh pr view 1'")
+        self.assertTrue(shown[2].startswith("Calling: pg-readonly.run_sql"))
+        self.assertEqual(shown[3:], ["Codex: Checking the outbox.", "Codex done, 1,234 tokens"])
+
+    def test_refused_codex_tools_are_shown(self):
+        failed = {"type": "item.completed", "item": {"type": "command_execution", "command": "git push", "exit_code": 128, "status": "failed", "aggregated_output": "\nHost key verification failed.\n"}}
+        self.assertEqual(watch.render(failed), ["Tool refused or failed: git push (exit 128): Host key verification failed."])
+        mcp = {"type": "item.completed", "item": {"type": "mcp_tool_call", "server": "pg-readonly", "tool": "run_sql", "error": {"message": "requires approval"}}}
+        self.assertEqual(watch.render(mcp), ["Tool refused or failed: pg-readonly.run_sql: requires approval"])
+        self.assertEqual(watch.render({"type": "turn.failed", "error": {"message": "rate limited"}}), ["Codex failed: rate limited"])
+
+    def test_a_codex_request_shows_how_to_resume_it(self):
+        summary = watch.summary({"status": "answered", "channel": "C1", "session_id": "t1", "engine": "codex", "tokens": 4321})
+        self.assertIn("Tokens: 4,321", summary)
+        self.assertIn("cd ~/dev/envoyai-backend && codex resume t1", summary)
+        self.assertIn("claude --resume s1", watch.summary({"status": "answered", "channel": "C1", "session_id": "s1"}))
 
     def test_terminal_control_sequences_are_stripped(self):
         self.assertEqual(watch.clean("a\x1b[31mred\x1b[0m\x07b"), "aredb")

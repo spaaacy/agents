@@ -95,6 +95,8 @@ class FakeSlack:
 
 
 class StateIsolation(unittest.TestCase):
+    agent = "claude"
+
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
         patches = [
@@ -103,6 +105,9 @@ class StateIsolation(unittest.TestCase):
             mock.patch.object(runner, "RUNS_DIR", self.tmp / "runs"),
             mock.patch.object(runner, "MCP_FILE", self.tmp / "mcp.json"),
             mock.patch.object(runner, "notify", lambda *args: None),
+            # Runs on Claude unless a test says otherwise; the real choice in ~/.agents/state is never read.
+            mock.patch.object(runner.engine, "engine", lambda *args: self.agent),
+            mock.patch.object(runner.engine, "describe", lambda *args: f"{self.agent} (test)"),
         ]
         for patch in patches:
             patch.start()
@@ -296,6 +301,87 @@ class Investigate(StateIsolation):
         self.assertNotIn("5", r.state.investigated)
 
 
+def codex_lines(text: str = "real: thing broke", session: str = "t1") -> list[str]:
+    return [
+        json.dumps({"type": "thread.started", "thread_id": session}),
+        json.dumps({"type": "item.completed", "item": {"type": "command_execution", "command": "ls", "exit_code": 0}}),
+        json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": text}}),
+        json.dumps({"type": "turn.completed", "usage": {"input_tokens": 1200, "output_tokens": 34}}),
+    ]
+
+
+class Codex(StateIsolation):
+    agent = "codex"
+
+    def setUp(self) -> None:
+        super().setUp()
+        home = self.tmp / "codex-home"
+        home.mkdir()
+        patch = mock.patch.object(runner.engine, "prepare_codex_home", lambda names: home)
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.calls: list[dict[str, Any]] = []
+
+    def fake_codex(self, lines: list[str], code: int = 0, answer_file: str | None = None) -> Any:
+        def execute(cmd: list[str], prompt: str, cwd: Path, timeout: int, on_line: Any, env: dict[str, str]) -> tuple[int, str]:
+            self.calls.append({"cmd": cmd, "prompt": prompt, "env": env})
+            if answer_file is not None:
+                Path(cmd[cmd.index("-o") + 1]).write_text(answer_file)
+            for line in lines:
+                on_line(line + "\n")
+            return code, "stderr tail"
+
+        return execute
+
+    def test_the_answer_session_and_tokens_come_from_the_events(self) -> None:
+        events = self.tmp / "run" / "events.jsonl"
+        events.parent.mkdir()
+        report = runner.run_codex(CFG, "investigate", events, self.fake_codex(codex_lines()))
+        self.assertEqual((report.text, report.session_id, report.agent, report.tokens), ("real: thing broke", "t1", "codex", 1234))
+        self.assertIsNone(report.error)
+        call = self.calls[0]
+        self.assertTrue(call["prompt"].startswith(runner.SYSTEM_PROMPT))  # no system prompt flag on codex exec
+        self.assertEqual(call["env"]["CODEX_HOME"], str(self.tmp / "codex-home"))
+        self.assertIn("-o", call["cmd"])
+        self.assertEqual(len(events.read_text().splitlines()), 4)  # every event kept for the live view
+
+    def test_the_last_message_file_wins_over_the_streamed_message(self) -> None:
+        report = runner.run_codex(CFG, "x", None, self.fake_codex(codex_lines("partial"), answer_file="full report"))
+        self.assertEqual(report.text, "full report")
+
+    def test_a_failed_turn_is_an_error(self) -> None:
+        lines = codex_lines()[:1] + [json.dumps({"type": "turn.failed", "error": {"message": "model overloaded"}})]
+        report = runner.run_codex(CFG, "x", None, self.fake_codex(lines, code=1))
+        self.assertEqual(report.error, "model overloaded")
+        self.assertEqual(report.session_id, "t1")
+
+    def test_an_exit_with_no_events_reports_stderr(self) -> None:
+        report = runner.run_codex(CFG, "x", None, self.fake_codex([], code=2))
+        self.assertIn("codex exited 2: stderr tail", report.error or "")
+
+    def test_investigate_runs_codex_and_footer_resumes_it(self) -> None:
+        slack = FakeSlack()
+        r = runner.Runner(CFG, FakeDatadog(), slack, "D1")  # type: ignore[arg-type]
+        real = runner.run_codex
+        with mock.patch.object(runner, "run_claude") as claude, mock.patch.object(runner, "run_codex") as codex:
+            codex.side_effect = lambda cfg, prompt, events: real(cfg, prompt, events, self.fake_codex(codex_lines()))
+            report = r.investigate([page("a", 5)])
+        claude.assert_not_called()
+        self.assertEqual(report.agent, "codex")
+        self.assertIn(runner.SHELL_LIMITS["codex"], self.calls[0]["prompt"])
+        self.assertNotIn(runner.SHELL_LIMITS["claude"], self.calls[0]["prompt"])
+        self.assertIn("codex resume t1", slack.posts[1][1])
+        self.assertIn("1,234 tokens", slack.posts[1][1])
+        run_json = json.loads(next((self.tmp / "runs").glob("*/run.json")).read_text())
+        self.assertEqual((run_json["agent"], run_json["tokens"], run_json["engine"]), ("codex", 1234, "codex (test)"))
+        self.assertIn("codex resume t1", watch.summary(run_json))
+
+    def test_the_claude_footer_is_unchanged(self) -> None:
+        footer = runner.report_footer(runner.Report("x", "s1", cost_usd=1.5))
+        self.assertIn("claude --resume s1", footer)
+        self.assertIn("$1.50", footer)
+
+
 class EnvFile(unittest.TestCase):
     def test_reads_key_value_lines(self) -> None:
         path = Path(tempfile.mkdtemp()) / "keys.env"
@@ -308,8 +394,9 @@ class WatchView(unittest.TestCase):
         now = 1000.0
         self.assertIn("not started", watch.health_line(None, now))
         self.assertIn("looks stopped", watch.health_line({"heartbeat_at": 0}, now))
-        line = watch.health_line({"heartbeat_at": now, "on_call": True, "pending": 2}, now)
+        line = watch.health_line({"heartbeat_at": now, "on_call": True, "pending": 2, "engine": "codex (gpt-6.1-sol, medium effort)"}, now)
         self.assertIn("you're on call", line)
+        self.assertIn("investigating on codex (gpt-6.1-sol", line)
         self.assertIn("2 pages waiting", line)
 
 

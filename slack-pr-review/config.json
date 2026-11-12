@@ -15,7 +15,6 @@
     "envoy-ai/envoyai-chat-ui": "/Users/aakifmohamed/dev/envoyai-chat-ui",
     "envoy-ai/ci-workflows": "/Users/aakifmohamed/dev/ci-workflows"
   },
-  "reviewer": "codex",
   "claude": "/Users/aakifmohamed/.local/bin/claude",
   "claude_allowed_tools": [
     "Read",

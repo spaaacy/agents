@@ -15,7 +15,7 @@ command -v claude >/dev/null && python3 "$A/mcp/render.py" claude --apply
 fi
 
 # Commands (the background tools' live views)
-for cmd in watch-slack-claude watch-pr-reviews watch-on-call; do link "$A/bin/$cmd" "$HOME/.local/bin/$cmd"; done
+for cmd in watch-slack-claude watch-pr-reviews watch-on-call agents-engine; do link "$A/bin/$cmd" "$HOME/.local/bin/$cmd"; done
 
 # Codex (reads ~/.agents/skills natively)
 codex_dir="${CODEX_HOME:-$HOME/.codex}"
