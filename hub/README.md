@@ -1,0 +1,122 @@
+# Agents hub
+
+One background process on this Mac runs every unattended agent: it answers Aakif in Slack (`slack_ask`), investigates Datadog pages while he is on call (`on_call`), and reviews the PRs he is tagged on in #devs (`pr_review`). It has one job queue, one Slack connection, one switch between Codex and Claude, a local dashboard, and control commands in Slack. It replaces the three separate services (slack-claude, on-call-runner, slack-pr-review) that were built one at a time.
+
+## How it fits together
+
+- Plugins notice work and do it. Each one is a module under `plugins/` with a `Plugin` subclass. Its sources (a Slack event, a poll of Datadog, a search of #devs) run on their own threads and only add jobs to the queue. Its `handle(job, ctx)` does one job, normally one agent turn through `ctx.run_agent(...)`, and returns a `JobResult`.
+- The scheduler (`core/scheduler.py`) runs queued jobs on a few worker threads (`scheduler.slots` in `config.json`, 2 by default), highest priority first, each plugin under its own limit (`max_concurrent`). An on-call page goes ahead of a PR review.
+- The job store (`core/store.py`) is one SQLite file. Every job keeps its state (queued, running, done, failed, cancelled), the engine and session that ran it, the link to what it produced, its token count or cost, and its error. A job left running when the hub stopped is marked failed, never counted as done; retry it.
+- The agent runner (`core/agent.py`) runs one turn on Codex or Claude, whichever the switch names, with the same limits for every plugin. Sessions are stored with their engine, so a thread one agent started is never handed to the other.
+- Slack (`core/slack.py`) is one Socket Mode connection shared by all plugins. The bot's name is read from Slack at start, so renaming the app needs no code change. Tokens stay in the Keychain under the names in `config.json` (`slack.keychain`).
+
+## Adding an agent
+
+1. Create `plugins/<name>/plugin.py` with a subclass of `hub.core.plugin.Plugin`. Set `name` (must match the config key), `title`, `priority` (higher runs first) and `max_concurrent`.
+2. Implement `start()` to launch its sources (use `self.spawn(loop, "name")` for a thread, or `self.hub.slack.subscribe(handler)` for Slack events) and `handle(job, ctx)` to do one job. Enqueue with `self.enqueue(title, payload, dedupe=...)`; the dedupe key keeps a redelivered event from becoming a second job.
+3. Optional: `status()` (facts for the dashboard), `checks()` (lines for `agents check`), `commands()` (control commands, `!<name> <cmd>`), `cli()` (one-shot terminal commands, `agents <name> <cmd>`).
+4. Put its settings in `plugins/<name>/config.json` (allow lists, timeouts, its own options). Keys under the plugin's entry in the hub's `config.json` override single values.
+5. Add one line to `config.json`'s `plugins`: `"<name>": {"class": "hub.plugins.<name>.plugin:<Class>"}`. `"enabled": false` turns a plugin off without removing it.
+6. Restart the hub. Each plugin gets its own key-value scope (`self.get`/`self.put`), its own folder under `~/.agents/state/hub/plugins/<name>/`, and a run folder per job.
+
+## Codex or Claude
+
+```sh
+agents engine                                            # what agents run on now
+agents engine codex                                      # Codex (gpt-6.1-sol, medium effort by default)
+agents engine codex --model gpt-6.1-sol --effort medium  # change the Codex model or effort; kept for later switches
+agents engine claude                                     # Claude
+```
+
+The choice is read before every job, so it applies to the next one with no restart; a job already running finishes on its engine. It is stored in `~/.agents/state/engine.json`. The dashboard's Codex/Claude toggle and Slack's `!engine` do the same. How each engine is locked down for unattended runs is described in `~/.agents/README.md` ("Background agents: Codex or Claude") and `core/engine.py`.
+
+## Dashboard
+
+`agents open`, or http://127.0.0.1:8765 while the hub runs. One page, refreshed every few seconds:
+
+- Header: which agent runs (with the Codex/Claude toggle), the Slack connection and the bot's current name, how many jobs are running out of the slots, how long the hub has been up, and a box for any control command.
+- One card per plugin: on or paused (click to change), its live facts (last poll, errors, whether it is on call, and so on), and this week's counts.
+- The job feed, newest first, filterable by plugin and state: what each job is, how long it took, the engine, tokens or cost, and a link to what it produced (the Slack answer, the posted review, the on-call report).
+- A job's detail: summary, error, link, the command to resume its session on the laptop (with a copy button), retry or cancel, and the agent's work as it streams (commands run, tools called, refusals, its messages; thinking and raw tool output stay in the run folder).
+
+It listens on 127.0.0.1 only. Every request must name the dashboard in its Host header, and every change (POST) needs the token from `/api/token` in an `X-Hub-Token` header plus no Origin or the dashboard's own. Another website open in the browser can send a request but cannot read the token, so it cannot change anything. The token is new at each start and kept in `~/.agents/state/hub/dashboard.token` (readable only by this user), where the `agents` command finds it.
+
+## Control commands in Slack
+
+In the bot's DM, a message from Aakif that starts with `!` is a command, never a question for an agent; the answer comes back in the thread.
+
+```
+!status                 what is running, queued and failed, per plugin
+!jobs [plugin]          the last jobs
+!job <id>               one job: state, link, error, resume command
+!engine [codex|claude] [--effort E] [--model M]
+!retry <id>             run a finished job again
+!cancel <id>            stop a running or queued job
+!pause <plugin>         stop starting new jobs for it (its sources keep queueing)
+!resume <plugin>
+!<plugin> <command> ... a plugin's own command
+!help
+```
+
+A job id can be shortened to any unique prefix. The prefix is `slack.control_prefix` in `config.json`.
+
+## The `agents` command
+
+```sh
+agents status                 engine, plugins, Slack, running and queued jobs
+agents check                  tokens, sign-ins, CLIs, per plugin; posts nothing
+agents engine [codex|claude] [--model M] [--effort E]
+agents jobs [plugin]          the last jobs; also: job <id>, retry <id>, cancel <id>, pause <plugin>, resume <plugin>
+agents open                   the dashboard in the browser
+agents watch [--plugin NAME]  live view in this terminal; --once prints the status and the last 15 jobs
+agents <plugin> <cmd> ...     a plugin's one-shot command, run in this terminal (agents <plugin> lists them)
+```
+
+Commands that change the running hub go to it through the dashboard's local API. With the hub stopped, `status` and `jobs` read the job store directly. `agents watch` reads the store and the run folders directly, so it works either way and never changes anything.
+
+## Setup
+
+Done once. `bin/agents` is linked into `~/.local/bin` by `install.sh`.
+
+```sh
+# The Python environment (Python 3.12, slack_sdk only)
+/Users/aakifmohamed/.pyenv/versions/3.12.8/bin/python3 -m venv ~/.agents/hub/.venv
+~/.agents/hub/.venv/bin/pip install slack_sdk
+
+agents check                                                       # tokens, Slack, CLIs, each plugin; posts nothing
+cp ~/.agents/hub/ai.envoy.agents-hub.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.envoy.agents-hub.plist   # start now and at every login
+```
+
+```sh
+launchctl kickstart -k gui/$(id -u)/ai.envoy.agents-hub                              # restart, e.g. after a code change
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/ai.envoy.agents-hub.plist     # stop
+tail -f ~/.agents/state/hub/hub.log                                                  # the hub's log
+```
+
+The LaunchAgent restarts the hub after a crash, not after a clean exit. Its own output goes to `~/.agents/state/hub/launchd.log`.
+
+## Where state lives
+
+Everything is under `~/.agents/state/hub/` (not in git):
+
+- `hub.sqlite3`: the job queue and history, and each plugin's key-value scope (`kv` table, scope = plugin name; pauses live under scope `hub`).
+- `runs/<job id>/`: one folder per job, with the agent's `events.jsonl` and any scratch files the plugin keeps.
+- `plugins/<name>/`: a plugin's own files.
+- `status.json`: the hub's heartbeat, written every 10 seconds; `agents status` and `agents watch` read it to tell whether the hub runs.
+- `hub.log`, `launchd.log`, `dashboard.token`.
+
+Nothing is deleted automatically.
+
+## Tests
+
+```sh
+cd ~/.agents && PYTHONPATH=. hub/.venv/bin/python -m unittest discover -s hub/tests -t .
+```
+
+## Known limits
+
+- The Mac must be awake and online. Slack retries a missed event a few times, then drops it; the on-call and PR-review sources catch up from their checkpoints after a sleep.
+- Jobs run on threads in one process: a hub restart stops every running job (they are marked failed, to retry), and a plugin bug that crashes the process stops them all until launchd restarts it.
+- The dashboard has no login of its own: anyone who can run programs as this user on this Mac can use it, the same as they could run the agents directly.
+- `agents watch` and the dashboard show the agent's work as the engine reports it; a step the engine does not report is not shown.

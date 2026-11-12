@@ -46,18 +46,20 @@ The check reports `TOOLS AVAILABLE` only after observing callable tools, `ACTION
 
 For Slack account setup, open the app's **Plugins** tab, find **Slack**, install it if missing, and complete its account connection. From terminal Codex, run `codex`, then `/plugins`. Start a new chat after installation, then rerun the check. The checker cannot prove access to a specific private message or make tools appear in an already-open chat. Other direct server connections are outside this check's scope. See the [official plugin setup steps](https://learn.chatgpt.com/docs/plugins#install-and-use-a-plugin).
 
-## Background agents: Codex or Claude
+## Background agents: the hub
 
-Three tools run agents on this Mac with nobody watching: `slack-claude` (answers Aakif in Slack), `on-call-runner` (investigates Datadog pages) and `slack-pr-review` (reviews PRs he is tagged on in #devs). One switch picks the agent for all three, read before every run, so it applies to the next request with no restart:
+One process, the agents hub (`hub/`, LaunchAgent `ai.envoy.agents-hub`), runs every agent that works on this Mac with nobody watching. Each one is a plugin: `slack_ask` answers Aakif in Slack, `on_call` investigates Datadog pages while he is on call, and `pr_review` reviews the PRs he is tagged on in #devs. They share one job queue (on-call pages first, then Slack questions, then reviews), one Slack connection, one agent runner and one record of every run. A new agent is a new folder under `hub/plugins/` and one line in `hub/config.json`; `hub/README.md` covers the plugin model, setup and limits.
 
 ```sh
-agents-engine                                            # what they run on now
-agents-engine codex                                      # Codex (gpt-6.1-sol, medium effort by default)
-agents-engine codex --model gpt-6.1-sol --effort medium  # change the Codex model or effort; kept for later switches
-agents-engine claude                                     # back to Claude
+agents status                  # what runs, what waits, what failed
+agents open                    # the dashboard (http://127.0.0.1:8765): every job, live, with retry, cancel and pause
+agents watch                   # the same feed in this terminal
+agents engine codex            # Codex (gpt-6.1-sol, medium effort by default) for every plugin; `agents engine claude` to switch back
+agents engine codex --model gpt-6.1-sol --effort medium
+agents check                   # tokens, sign-ins and CLIs; posts nothing
 ```
 
-The choice is `state/engine.json` (not in git); with no file they run on Codex. `engine/engine.py` holds the switch and the Codex setup the bot and the on-call runner share: their Codex runs use their own home, `state/codex-home`, rebuilt before each run, which shares the login and the session store with `~/.codex` (so `codex resume <id>` works on the laptop) and nothing else. There every file is read-only, `~/.ssh` cannot be read, the network is on, nothing is ever approved, Linear offers only its read tools, and `engine/background.rules` refuses the commands that write somewhere else (git push and friends, `gh api`, PR and issue writes, `az`). The interactive Codex rules, which allow `git push` and commit, are not loaded. The rules match commands as written, so one built to dodge them (through `$(...)`, say) is held back only by the read-only files and the missing ssh keys. PR reviews keep their own Codex mode (normal protections with automatic approval review, in a throwaway checkout, because they run tests), with the chosen model and effort. `python3 -m unittest engine/test_engine.py` checks the switch and the home.
+In the bot's Slack DM, a message starting with `!` controls the hub (`!status`, `!engine claude`, `!retry <id>`, `!pause pr_review`, `!help`); anything else is a question for the agent. The engine choice is `state/engine.json` (not in git) and applies to the next job, no restart. Codex runs in the hub's locked-down home (`hub/core/engine.py`): every file read-only, `~/.ssh` unreadable, network on, nothing approved, Linear's read tools only, and `hub/core/background.rules` refusing git push, `gh api`, PR and issue writes and `az`. Those rules match commands as written, so a command built to dodge them is held back only by the read-only files and the missing ssh keys. PR reviews run in a throwaway checkout with Codex's normal protections and automatic approval review, because they run tests. Run the hub's tests with `PYTHONPATH=. hub/.venv/bin/python -m unittest discover -s hub/tests -t .`.
 
 ## Codex setup
 

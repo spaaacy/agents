@@ -2,8 +2,5 @@ mcp/secrets.env
 .DS_Store
 __pycache__/
 skills/synced/
-slack-pr-review/state/
-slack-claude/state/
-slack-claude/.venv/
-on-call-runner/state/
 state/
+hub/.venv/

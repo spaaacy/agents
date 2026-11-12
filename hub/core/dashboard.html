@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agents hub</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f24; --muted: #626b76; --line: #dfe3e8;
+    --accent: #2f6fde; --ok: #1d8a4e; --warn: #b7791f; --bad: #c53b3b; --chip: #eef1f5; --code: #f1f3f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111418; --panel: #191d23; --text: #e4e7eb; --muted: #98a1ac; --line: #2a3038;
+      --accent: #6c9cf0; --ok: #4cc283; --warn: #e0a84a; --bad: #ef6b6b; --chip: #232931; --code: #14181d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  header { position: sticky; top: 0; z-index: 2; background: var(--panel); border-bottom: 1px solid var(--line);
+           padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
+  h1 { font-size: 16px; margin: 0 8px 0 0; }
+  .muted { color: var(--muted); }
+  .chip { display: inline-flex; align-items: center; gap: 6px; background: var(--chip); border-radius: 999px;
+          padding: 3px 10px; font-size: 13px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--muted); }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); }
+  button { font: inherit; color: var(--text); background: var(--chip); border: 1px solid var(--line);
+           border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  select, input { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line);
+                  border-radius: 6px; padding: 3px 8px; }
+  main { padding: 14px 16px 40px; display: grid; gap: 14px; max-width: 1400px; margin: 0 auto; }
+  .plugins { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  .card h2 { font-size: 14px; margin: 0; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .facts { margin: 8px 0 0; font-size: 12.5px; display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; }
+  .facts dt { color: var(--muted); } .facts dd { margin: 0; overflow-wrap: anywhere; }
+  .counts { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; font-size: 12px; }
+  .layout { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 1000px) { .layout.open { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); } }
+  .feed .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .feed .bar h2 { font-size: 14px; margin: 0 auto 0 0; }
+  .job { display: grid; grid-template-columns: 90px 1fr auto; gap: 2px 10px; padding: 8px 10px;
+         border-top: 1px solid var(--line); cursor: pointer; }
+  .job:first-of-type { border-top: 0; }
+  .job:hover, .job.sel { background: var(--chip); }
+  .job .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .job .meta { grid-column: 2 / 4; font-size: 12px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
+  .state { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+  .s-running { color: var(--accent); } .s-queued { color: var(--warn); } .s-done { color: var(--ok); }
+  .s-failed { color: var(--bad); } .s-cancelled { color: var(--muted); }
+  a { color: var(--accent); }
+  .detail h2 { font-size: 15px; margin: 0 0 6px; overflow-wrap: anywhere; }
+  .detail .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 6px 0; }
+  pre { background: var(--code); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin: 8px 0;
+        white-space: pre-wrap; word-break: break-word; font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  pre.log { max-height: 55vh; overflow: auto; }
+  .err { color: var(--bad); }
+  .cmd { display: flex; gap: 6px; align-items: center; }
+  .cmd input { width: 220px; }
+  #reply { white-space: pre-wrap; font-size: 12.5px; }
+  .empty { padding: 16px; color: var(--muted); }
+  .close { float: right; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Agents</h1>
+  <span class="chip" id="hubstate"><span class="dot"></span><span>connecting…</span></span>
+  <span class="chip">agent
+    <button id="eng-codex" data-engine="codex">Codex</button>
+    <button id="eng-claude" data-engine="claude">Claude</button>
+    <span class="muted" id="engine-text"></span>
+  </span>
+  <span class="chip" id="slack"><span class="dot"></span><span>Slack</span></span>
+  <span class="chip" id="slots"></span>
+  <span class="cmd"><input id="cmd" placeholder="command, e.g. status" autocomplete="off"><button id="run">Run</button></span>
+</header>
+<main>
+  <pre id="reply" hidden></pre>
+  <section class="plugins" id="plugins"></section>
+  <div class="layout" id="layout">
+    <section class="card feed">
+      <div class="bar">
+        <h2>Jobs</h2>
+        <select id="f-plugin"><option value="">all agents</option></select>
+        <select id="f-status">
+          <option value="">any state</option><option>running</option><option>queued</option>
+          <option>done</option><option>failed</option><option>cancelled</option>
+        </select>
+      </div>
+      <div id="jobs"></div>
+    </section>
+    <section class="card detail" id="detail" hidden></section>
+  </div>
+</main>
+<script>
+"use strict";
+let token = null, state = null, selected = null, tail = { id: null, offset: 0, timer: null };
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+
+function ago(t) {
+  if (!t) return "-";
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - t));
+  if (s >= 86400) return Math.floor(s / 86400) + "d ago";
+  if (s >= 3600) return Math.floor(s / 3600) + "h ago";
+  if (s >= 60) return Math.floor(s / 60) + "m ago";
+  return s + "s ago";
+}
+function dur(a, b) {
+  if (!a) return "";
+  const s = Math.max(0, Math.floor((b || Date.now() / 1000) - a));
+  return s >= 3600 ? Math.floor(s / 3600) + "h " + Math.floor((s % 3600) / 60) + "m" : s >= 60 ? Math.floor(s / 60) + "m " + (s % 60) + "s" : s + "s";
+}
+function safeLink(url) { return /^https?:\/\//i.test(url || "") ? url : null; }
+function resumeCommand(job) {
+  if (job.payload && job.payload.resume_command) return job.payload.resume_command;
+  if (!job.session) return null;
+  const m = /^(codex|claude):(.*)$/.exec(job.session);
+  const engine = m ? m[1] : "claude", id = m ? m[2] : job.session;
+  return engine === "codex" ? `cd ~/dev/envoyai-backend && codex resume ${id}` : `cd ~/dev/envoyai-backend && claude --resume ${id}`;
+}
+
+async function getJSON(path) {
+  const r = await fetch(path, { cache: "no-store" });
+  if (!r.ok) throw new Error(path + " " + r.status);
+  return r.json();
+}
+async function command(words) {
+  if (!token) token = (await getJSON("/api/token")).token;
+  const r = await fetch("/api/command", { method: "POST", headers: { "Content-Type": "application/json", "X-Hub-Token": token },
+                                          body: JSON.stringify({ words }) });
+  const data = await r.json().catch(() => ({}));
+  const text = data.reply || data.error || ("HTTP " + r.status);
+  const box = $("reply"); box.hidden = false; box.textContent = "› " + words.join(" ") + "\n" + text;
+  refresh();
+  return text;
+}
+
+function renderHeader(s) {
+  const alive = Date.now() / 1000 - s.heartbeat_at < 60;
+  const hs = $("hubstate"); hs.firstChild.className = "dot " + (alive ? "ok" : "bad");
+  hs.lastChild.textContent = alive ? "hub up " + dur(s.started_at).replace(/ \d+s$/, "") : "hub not responding";
+  for (const name of ["codex", "claude"]) $("eng-" + name).classList.toggle("on", s.engine.engine === name);
+  $("engine-text").textContent = s.engine_text;
+  const sl = $("slack");
+  if (!s.slack) { sl.firstChild.className = "dot"; sl.lastChild.textContent = "Slack off"; }
+  else {
+    sl.firstChild.className = "dot " + (s.slack.connected ? "ok" : "bad");
+    sl.lastChild.textContent = (s.slack.connected ? "Slack @" + (s.slack.bot || "?") : "Slack down" + (s.slack.error ? ": " + s.slack.error : ""))
+      + (s.slack.dm_as_user ? " · DMs as you" : "");
+  }
+  $("slots").textContent = `${s.running.length}/${s.slots} running`;
+}
+
+function renderPlugins(s) {
+  const box = $("plugins"); box.replaceChildren();
+  const filter = $("f-plugin"), current = filter.value;
+  filter.replaceChildren(el("option", null, "all agents")); filter.firstChild.value = "";
+  for (const [name, p] of Object.entries(s.plugins)) {
+    const opt = el("option", null, p.title || name); opt.value = name; filter.appendChild(opt);
+    const card = el("div", "card"), h = el("h2");
+    h.append(el("span", null, p.title || name));
+    const toggle = el("button", p.paused ? "" : "on", p.paused ? "paused" : "on");
+    toggle.title = p.paused ? "resume: start its queued jobs" : "pause: queue its jobs without running them";
+    toggle.onclick = () => command([p.paused ? "resume" : "pause", name]);
+    h.append(toggle); card.append(h);
+    const facts = el("dl", "facts");
+    facts.append(el("dt", null, "plugin"), el("dd", null, `${name} · priority ${p.priority} · ${p.max_concurrent} at a time`));
+    for (const [k, v] of Object.entries(p.status || {})) {
+      if (v === null || v === undefined || v === "") continue;
+      const value = typeof v === "number" && v > 1e9 && v < 1e11 ? ago(v) : typeof v === "object" ? JSON.stringify(v) : String(v);
+      facts.append(el("dt", null, k.replace(/_/g, " ")), el("dd", k === "error" ? "err" : null, value));
+    }
+    card.append(facts);
+    const counts = el("div", "counts"), c = (s.counts || {})[name] || {};
+    for (const st of ["running", "queued", "done", "failed"]) counts.append(el("span", "chip s-" + st, `${c[st] || 0} ${st}`));
+    counts.append(el("span", "muted", "this week"));
+    card.append(counts); box.append(card);
+  }
+  filter.value = current;
+}
+
+function renderJobs(s) {
+  const plugin = $("f-plugin").value, status = $("f-status").value;
+  const list = $("jobs"); list.replaceChildren();
+  const jobs = s.jobs.filter((j) => (!plugin || j.plugin === plugin) && (!status || j.status === status));
+  if (!jobs.length) { list.append(el("div", "empty", "No jobs yet.")); return; }
+  for (const j of jobs) {
+    const row = el("div", "job" + (selected === j.id ? " sel" : ""));
+    row.onclick = () => openJob(j.id);
+    row.append(el("span", "state s-" + j.status, j.status), el("span", "title", j.title), el("span", "muted", ago(j.created)));
+    const meta = el("div", "meta");
+    meta.append(el("span", null, (s.plugins[j.plugin] || {}).title || j.plugin));
+    if (j.started) meta.append(el("span", null, dur(j.started, j.finished)));
+    if (j.engine) meta.append(el("span", null, j.engine));
+    if (j.tokens) meta.append(el("span", null, j.tokens.toLocaleString() + " tokens"));
+    if (j.cost != null) meta.append(el("span", null, "$" + Number(j.cost).toFixed(2)));
+    if (j.attempt > 1) meta.append(el("span", null, "attempt " + j.attempt));
+    const link = safeLink(j.link);
+    if (link) { const a = el("a", null, "open"); a.href = link; a.target = "_blank"; a.rel = "noopener noreferrer"; a.onclick = (e) => e.stopPropagation(); meta.append(a); }
+    if (j.error && j.status !== "done") meta.append(el("span", "err", j.error.slice(0, 140)));
+    row.append(meta); list.append(row);
+  }
+}
+
+async function openJob(id) {
+  selected = id; clearTimeout(tail.timer);
+  const data = await getJSON("/api/jobs/" + encodeURIComponent(id));
+  const j = data.job, box = $("detail");
+  $("layout").classList.add("open"); box.hidden = false; box.replaceChildren();
+  const close = el("button", "close", "close"); close.onclick = () => { selected = null; clearTimeout(tail.timer); box.hidden = true; $("layout").classList.remove("open"); if (state) renderJobs(state); };
+  box.append(close, el("h2", null, j.title));
+  const row = el("div", "row");
+  row.append(el("span", "state s-" + j.status, j.status), el("span", "muted", `${j.plugin} · ${j.id} · queued ${ago(j.created)}${j.started ? " · ran " + dur(j.started, j.finished) : ""}${j.engine ? " · " + j.engine : ""}`));
+  box.append(row);
+  const actions = el("div", "row");
+  const link = safeLink(j.link);
+  if (link) { const a = el("a", null, "open result ↗"); a.href = link; a.target = "_blank"; a.rel = "noopener noreferrer"; actions.append(a); }
+  if (j.status === "running" || j.status === "queued") { const b = el("button", null, "cancel"); b.onclick = () => command(["cancel", j.id]); actions.append(b); }
+  else { const b = el("button", null, "retry"); b.onclick = () => command(["retry", j.id]); actions.append(b); }
+  box.append(actions);
+  const resume = resumeCommand(j);
+  if (resume) {
+    const r = el("div", "row"), code = el("pre", null, resume), copy = el("button", null, "copy");
+    copy.onclick = () => navigator.clipboard.writeText(resume).then(() => { copy.textContent = "copied"; setTimeout(() => copy.textContent = "copy", 1200); });
+    code.style.flex = "1"; code.style.margin = "0"; r.append(code, copy); box.append(r);
+  }
+  if (j.error) box.append(el("pre", "err", j.error));
+  if (j.summary) box.append(el("pre", null, j.summary));
+  box.append(el("div", "muted", "agent's work"));
+  const log = el("pre", "log", data.events.join("\n") || "(nothing yet)"); box.append(log);
+  log.scrollTop = log.scrollHeight;
+  tail = { id, offset: data.offset, timer: null };
+  if (j.status === "running" || j.status === "queued") follow(id, log);
+  if (state) renderJobs(state);
+}
+
+async function follow(id, log) {
+  if (selected !== id) return;
+  try {
+    const data = await getJSON(`/api/jobs/${encodeURIComponent(id)}/events?offset=${tail.offset}`);
+    if (selected !== id) return;
+    if (data.lines.length) {
+      const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 20;
+      log.textContent = (log.textContent === "(nothing yet)" ? "" : log.textContent + "\n") + data.lines.join("\n");
+      if (atBottom) log.scrollTop = log.scrollHeight;
+    }
+    tail.offset = data.offset;
+    if (data.status !== "running" && data.status !== "queued") { openJob(id); return; }
+  } catch (e) { /* the hub may be restarting; keep trying */ }
+  tail.timer = setTimeout(() => follow(id, log), 2000);
+}
+
+async function refresh() {
+  try {
+    state = await getJSON("/api/state");
+    renderHeader(state); renderPlugins(state); renderJobs(state);
+  } catch (e) {
+    const hs = $("hubstate"); hs.firstChild.className = "dot bad"; hs.lastChild.textContent = "hub not reachable";
+  }
+}
+
+for (const name of ["codex", "claude"]) $("eng-" + name).onclick = () => command(["engine", name]);
+$("f-plugin").onchange = () => state && renderJobs(state);
+$("f-status").onchange = () => state && renderJobs(state);
+const runCmd = () => { const words = $("cmd").value.trim().split(/\s+/).filter(Boolean); if (words.length) { command(words); $("cmd").value = ""; } };
+$("run").onclick = runCmd;
+$("cmd").addEventListener("keydown", (e) => { if (e.key === "Enter") runCmd(); });
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

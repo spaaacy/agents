@@ -1,3 +1,0 @@
-#!/bin/zsh
-# Live view of the Slack PR review worker, in this terminal. Ctrl-C closes the view; the worker keeps running.
-exec /Users/aakifmohamed/.pyenv/versions/3.12.8/bin/python3 -u "$HOME/.agents/slack-pr-review/watch.py" "$@"

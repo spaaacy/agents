@@ -1,0 +1,3 @@
+#!/bin/sh
+# The agents hub from a terminal: status, engine switch, jobs, the dashboard, live view (agents --help).
+PYTHONPATH="$HOME/.agents" exec "$HOME/.agents/hub/.venv/bin/python" -m hub "$@"

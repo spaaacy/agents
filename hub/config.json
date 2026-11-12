@@ -1,0 +1,40 @@
+{
+  "owner": {
+    "slack_user_id": "U0B11TF094H",
+    "github_login": "spaaacy"
+  },
+  "slack": {
+    "keychain": {
+      "bot": "slack-claude-bot-token",
+      "app": "slack-claude-app-token",
+      "user": "slack-claude-user-token"
+    },
+    "control_prefix": "!"
+  },
+  "dashboard": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": 8765
+  },
+  "scheduler": {
+    "slots": 2
+  },
+  "agent": {
+    "workdir": "~/dev/envoyai-backend",
+    "add_dirs": [
+      "~/dev/envoyai-web",
+      "~/dev/envoyai-chrome-plugin",
+      "~/dev/envoyai-chat-ui",
+      "~/.agents"
+    ],
+    "mcp_servers": [
+      "pg-readonly",
+      "context7"
+    ]
+  },
+  "plugins": {
+    "on_call": {"class": "hub.plugins.on_call.plugin:OnCall"},
+    "slack_ask": {"class": "hub.plugins.slack_ask.plugin:SlackAsk"},
+    "pr_review": {"class": "hub.plugins.pr_review.plugin:PrReview"}
+  }
+}
