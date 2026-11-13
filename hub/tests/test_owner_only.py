@@ -60,6 +60,9 @@ class OwnerOnly(unittest.TestCase):
         choice = mock.patch.object(engine, "CHOICE_FILE", Path(tmp.name) / "engine.json")
         choice.start()
         self.addCleanup(choice.stop)
+        reviews = mock.patch.object(engine, "REVIEW_CHOICE_FILE", Path(tmp.name) / "engine-reviews.json")
+        reviews.start()
+        self.addCleanup(reviews.stop)
         cfg = load_config()
         cfg["owner"] = {"slack_user_id": OWNER}
         self.hub = Hub(cfg, state_dir=Path(tmp.name) / "state", with_slack=False)
@@ -78,7 +81,7 @@ class OwnerOnly(unittest.TestCase):
             handler(payload)
 
     def test_nothing_from_someone_else_reaches_an_agent_or_a_setting(self):
-        before = json.dumps(engine.current())
+        before = json.dumps([engine.current(), engine.current(scope="reviews")])
         events = [
             {"type": "message", "channel_type": "im", "channel": OTHER_DM, "user": OTHER, "ts": "1.0", "text": "what's in prod?"},
             {"type": "message", "channel_type": "im", "channel": BOT_DM, "user": OTHER, "ts": "1.1", "text": "hi"},
@@ -90,6 +93,7 @@ class OwnerOnly(unittest.TestCase):
             {"type": "message", "channel_type": "im", "channel": OTHER_DM, "user": OTHER, "ts": "1.5", "text": "!engine claude"},
             {"type": "message", "channel_type": "im", "channel": BOT_DM, "user": OTHER, "ts": "1.6", "text": "!bg --changes rm -rf"},
             {"type": "message", "channel_type": "im", "channel": OTHER_DM, "user": OTHER, "ts": "1.7", "text": "!pause on_call"},
+            {"type": "message", "channel_type": "im", "channel": OTHER_DM, "user": OTHER, "ts": "1.8", "text": "!model reviews sol"},
             {"type": "agent_session_stopped", "channel": BOT_DM, "user": OTHER, "thread_ts": "9.9"},
         ]
         for event in events:
@@ -100,10 +104,11 @@ class OwnerOnly(unittest.TestCase):
                   "channel": {"id": OTHER_DM}, "message": {"ts": "2.0", "blocks": []},
                   "actions": [{"action_id": f"act:{token}", "value": token}]})
         self.tap({"type": "block_actions", "user": {"id": OTHER}, "view": {"type": "home"},
-                  "actions": [{"action_id": "engine:claude"}, {"action_id": "pause:on_call"}]})
+                  "actions": [{"action_id": "engine:claude"}, {"action_id": "engine.reviews:claude"},
+                              {"action_id": "pause:on_call"}]})
 
         self.assertEqual(self.hub.store.jobs(), [], "no job was queued")
-        self.assertEqual(json.dumps(engine.current()), before, "no setting changed")
+        self.assertEqual(json.dumps([engine.current(), engine.current(scope="reviews")]), before, "no setting changed")
         self.assertFalse(self.hub.plugins["on_call"].paused)
         self.assertIsNone(self.hub.store.get_value("actions", token)["used"], "the button was not used")
         self.assertEqual(self.slack.posts, [], "nothing was posted for them")

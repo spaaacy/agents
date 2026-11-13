@@ -8,6 +8,7 @@ no restart:
   agents-engine codex                 switch all three to Codex (model and effort kept)
   agents-engine codex --model gpt-6.1-sol --effort medium
   agents-engine claude                switch all three to Claude
+  agents-engine reviews codex --model astra --effort xhigh   PR reviews only (their own setting)
 
 The choice lives in ~/.agents/state/engine.json (not in git). With no file the
 tools run on Codex, gpt-6.1-sol at medium effort.
@@ -37,6 +38,7 @@ from typing import Any
 HERE = Path(__file__).resolve().parent
 STATE = Path.home() / ".agents" / "state"
 CHOICE_FILE = STATE / "engine.json"
+REVIEW_CHOICE_FILE = STATE / "engine-reviews.json"  # PR reviews have a setting of their own
 CODEX_HOME = STATE / "codex-home"          # read-only runs
 ACT_CODEX_HOME = STATE / "codex-home-act"  # runs Aakif approved with a button: may write where allowed
 USER_CODEX_HOME = Path(os.environ.get("CODEX_HOME_INTERACTIVE", Path.home() / ".codex"))
@@ -54,6 +56,17 @@ DEFAULT: dict[str, Any] = {
     "codex": {"model": "gpt-6.1-sol", "effort": "medium"},
     "claude": {"model": None, "effort": None},  # None: the CLI's own default
 }
+# Settings of their own, switched the same way with the scope word first (`agents model reviews astra`,
+# `!effort reviews xhigh`). "all" is every plugin's; "reviews" is the PR reviewer's, which defaults to
+# what reviews ran on before the hub: the frontier model at extra-high effort.
+SCOPES = ("all", "reviews")
+SCOPE_LABELS = {"all": "agents", "reviews": "PR reviews"}
+SCOPE_DEFAULTS: dict[str, dict[str, Any]] = {
+    "all": DEFAULT,
+    "reviews": {"engine": "codex", "codex": {"model": "gpt-6-astra", "effort": "xhigh"},
+                "claude": {"model": None, "effort": None}},
+}
+SCOPE_WORDS = {"reviews": "reviews", "review": "reviews", "pr-reviews": "reviews", "pr_review": "reviews"}
 # Claude Code takes an alias for the newest of a family or a full model id (`claude --help`).
 CLAUDE_MODELS = [("fable", "Fable (newest)"), ("opus", "Opus (newest)"), ("sonnet", "Sonnet (newest)"),
                  ("haiku", "Haiku (newest)"), ("claude-fable-5-2", "Fable 5.2"), ("claude-opus-5-5", "Opus 5.5"),
@@ -141,32 +154,46 @@ def model_info(name: str, slug: str | None) -> Model | None:
 # --------------------------------------------------------------------------- the choice
 
 
-def current(path: Path | None = None) -> dict[str, Any]:
+def split_scope(words: list[str]) -> tuple[str, list[str]]:
+    """A leading scope word ("reviews") picks that setting; without one, the words are for every plugin's."""
+    if words and str(words[0]).lower() in SCOPE_WORDS:
+        return SCOPE_WORDS[str(words[0]).lower()], list(words[1:])
+    return "all", list(words)
+
+
+def scope_file(scope: str = "all") -> Path:
+    if scope not in SCOPES:
+        raise ValueError(f"unknown setting {scope!r}; pick one of {', '.join(SCOPES)}")
+    return CHOICE_FILE if scope == "all" else REVIEW_CHOICE_FILE
+
+
+def current(path: Path | None = None, scope: str = "all") -> dict[str, Any]:
     """The engine choice, with defaults filled in. An unreadable or unknown choice reads as the default."""
-    path = path or CHOICE_FILE
+    path = path or scope_file(scope)
+    default = SCOPE_DEFAULTS[scope]
     try:
         saved = json.loads(path.read_text())
     except (OSError, ValueError):
         saved = {}
-    choice = json.loads(json.dumps(DEFAULT))
+    choice = json.loads(json.dumps(default))
     if saved.get("engine") in ENGINES:
         choice["engine"] = saved["engine"]
     for name in ENGINES:
         if isinstance(saved.get(name), dict):
             choice[name].update({k: v for k, v in saved[name].items() if k in choice[name]})
     if choice["codex"]["effort"] not in EFFORTS:
-        choice["codex"]["effort"] = DEFAULT["codex"]["effort"]
+        choice["codex"]["effort"] = default["codex"]["effort"]
     if choice["claude"]["effort"] not in (None, *CLAUDE_EFFORTS):
         choice["claude"]["effort"] = None
     return choice
 
 
-def engine(path: Path | None = None) -> str:
-    return current(path)["engine"]
+def engine(path: Path | None = None, scope: str = "all") -> str:
+    return current(path, scope)["engine"]
 
 
-def _save(choice: dict[str, Any], path: Path | None = None) -> dict[str, Any]:
-    path = path or CHOICE_FILE
+def _save(choice: dict[str, Any], path: Path | None = None, scope: str = "all") -> dict[str, Any]:
+    path = path or scope_file(scope)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(f".{os.getpid()}.tmp")
     tmp.write_text(json.dumps(choice, indent=1) + "\n")
@@ -189,11 +216,12 @@ def _apply_effort(choice: dict[str, Any], name: str, level: str | None) -> None:
     choice[name]["effort"] = level
 
 
-def choose(name: str, model: str | None = None, effort: str | None = None, path: Path | None = None) -> dict[str, Any]:
-    """Switch every plugin to engine ``name``; a model or effort given is kept for later switches too."""
+def choose(name: str, model: str | None = None, effort: str | None = None, path: Path | None = None,
+           scope: str = "all") -> dict[str, Any]:
+    """Switch the plugins (or one scope's setting) to engine ``name``; a model or effort given is kept for later."""
     if name not in ENGINES:
         raise ValueError(f"unknown engine {name!r}; pick one of {', '.join(ENGINES)}")
-    choice = current(path)
+    choice = current(path, scope)
     choice["engine"] = name
     if model:
         picked = find_model(model, prefer=name)
@@ -202,7 +230,7 @@ def choose(name: str, model: str | None = None, effort: str | None = None, path:
         _set_model(choice, picked)
     if effort:
         _apply_effort(choice, name, effort)
-    return _save(choice, path)
+    return _save(choice, path, scope)
 
 
 def _set_model(choice: dict[str, Any], picked: Model) -> None:
@@ -213,21 +241,26 @@ def _set_model(choice: dict[str, Any], picked: Model) -> None:
         choice[picked.engine]["effort"] = picked.default_effort if picked.engine == "codex" else None
 
 
-def set_model(name: str, effort: str | None = None, path: Path | None = None) -> dict[str, Any]:
+def set_model(name: str, effort: str | None = None, path: Path | None = None, scope: str = "all") -> dict[str, Any]:
     """Pick a model by name; picking another engine's model ("opus" while on Codex) switches the engine too."""
-    choice = current(path)
+    choice = current(path, scope)
     picked = find_model(name, prefer=choice["engine"])
     _set_model(choice, picked)
     if effort:
         _apply_effort(choice, picked.engine, effort)
-    return _save(choice, path)
+    return _save(choice, path, scope)
 
 
-def set_effort(level: str, path: Path | None = None) -> dict[str, Any]:
+def set_effort(level: str, path: Path | None = None, scope: str = "all") -> dict[str, Any]:
     """The current engine's effort ("default" goes back to the model's own)."""
-    choice = current(path)
+    choice = current(path, scope)
     _apply_effort(choice, choice["engine"], level)
-    return _save(choice, path)
+    return _save(choice, path, scope)
+
+
+def runs_on(scope: str = "all", choice: dict[str, Any] | None = None, *, now: bool = False) -> str:
+    """"agents run on codex (...)" / "PR reviews now run on ...", for replies."""
+    return f"{SCOPE_LABELS[scope]} {'now ' if now else ''}run on {describe(choice or current(scope=scope))}"
 
 
 def describe(choice: dict[str, Any] | None = None) -> str:
@@ -250,10 +283,13 @@ def claude_model_args(choice: dict[str, Any] | None = None) -> list[str]:
     return args + (["--effort", picked["effort"]] if picked.get("effort") else [])
 
 
-def listing(choice: dict[str, Any] | None = None) -> str:
+def listing(choice: dict[str, Any] | None = None, scope: str = "all") -> str:
     """`agents model` with no name: the current pick, then every model of both engines."""
-    choice = choice or current()
-    lines = [f"now: {describe(choice)}", ""]
+    choice = choice or current(scope=scope)
+    lines = [f"now: {runs_on(scope, choice)}"]
+    if scope == "all":
+        lines.append(f"      {runs_on('reviews')} (`model reviews <name>`)")
+    lines.append("")
     for name in ENGINES:
         lines.append(f"{name}:")
         for m in models(name):
@@ -261,7 +297,8 @@ def listing(choice: dict[str, Any] | None = None) -> str:
             default = f", default {m.default_effort}" if m.default_effort else ""
             lines.append(f" {mark} {m.slug:<20} {m.label:<16} effort {'/'.join(m.efforts)}{default}")
     lines.append("")
-    lines.append("pick one: `model <name>` (a short name works: sol, astra, opus); effort: `effort <level>`")
+    prefix = "" if scope == "all" else f"{scope} "
+    lines.append(f"pick one: `model {prefix}<name>` (a short name works: sol, astra, opus); effort: `effort {prefix}<level>`")
     return "\n".join(lines)
 
 
@@ -497,8 +534,10 @@ def final_text(output: Path, events: CodexEvents) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """`agents engine [codex|claude] [--model M] [--effort E]`."""
-    parser = argparse.ArgumentParser(prog="agents engine", description="Pick Codex or Claude for every plugin.")
+    """`agents engine [reviews] [codex|claude] [--model M] [--effort E]`."""
+    scope, argv = split_scope(list(sys.argv[1:] if argv is None else argv))
+    parser = argparse.ArgumentParser(prog="agents engine", description="Pick Codex or Claude for every plugin "
+                                     "(or, with `reviews` first, for PR reviews only).")
     parser.add_argument("engine", nargs="?", choices=ENGINES, help="switch to this engine; omit to print the choice")
     parser.add_argument("--model", help="model for that engine (kept for later switches)")
     parser.add_argument("--effort", choices=EFFORTS, help="effort for that engine (kept for later switches)")
@@ -506,45 +545,47 @@ def main(argv: list[str] | None = None) -> int:
     if args.engine is None:
         if args.model or args.effort:
             parser.error("name the engine the model or effort is for")
-        print(f"agents run on {describe()}")
+        print(runs_on(scope))
         return 0
     try:
-        choice = choose(args.engine, args.model, args.effort)
+        choice = choose(args.engine, args.model, args.effort, scope=scope)
     except ValueError as exc:
         parser.error(str(exc))
-    print(f"agents now run on {describe(choice)}; the next job uses it, no restart needed")
+    print(f"{runs_on(scope, choice, now=True)}; the next job uses it, no restart needed")
     return 0
 
 
 def model_main(argv: list[str]) -> int:
-    """`agents model [name] [--effort E]`."""
+    """`agents model [reviews] [name] [--effort E]`."""
+    scope, argv = split_scope(argv)
     parser = argparse.ArgumentParser(prog="agents model", description="Pick the model (and its engine).")
     parser.add_argument("name", nargs="?", help="model id or short name (sol, astra, opus...); omit to list them")
     parser.add_argument("--effort", choices=EFFORTS)
     args = parser.parse_args(argv)
     if not args.name:
-        print(listing())
+        print(listing(scope=scope))
         return 0
     try:
-        choice = set_model(args.name, args.effort)
+        choice = set_model(args.name, args.effort, scope=scope)
     except ValueError as exc:
         print(exc)
         return 2
-    print(f"agents now run on {describe(choice)}; the next job uses it")
+    print(f"{runs_on(scope, choice, now=True)}; the next job uses it")
     return 0
 
 
 def effort_main(argv: list[str]) -> int:
-    """`agents effort [level|default]`."""
+    """`agents effort [reviews] [level|default]`."""
+    scope, argv = split_scope(argv)
     if not argv:
-        print(f"agents run on {describe()}")
+        print(runs_on(scope))
         return 0
     try:
-        choice = set_effort(argv[0])
+        choice = set_effort(argv[0], scope=scope)
     except ValueError as exc:
         print(exc)
         return 2
-    print(f"agents now run on {describe(choice)}; the next job uses it")
+    print(f"{runs_on(scope, choice, now=True)}; the next job uses it")
     return 0
 
 

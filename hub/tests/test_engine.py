@@ -112,5 +112,49 @@ class CodexHome(unittest.TestCase):
         self.assertEqual(engine.final_text(Path("/nonexistent"), events), "the answer")
 
 
+
+class ReviewScope(unittest.TestCase):
+    """PR reviews have their own engine/model/effort, switched with the scope word first."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.all_file = Path(self.dir.name) / "engine.json"
+        self.review_file = Path(self.dir.name) / "engine-reviews.json"
+        for name, value in (("CHOICE_FILE", self.all_file), ("REVIEW_CHOICE_FILE", self.review_file)):
+            patcher = mock.patch.object(engine, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_reviews_default_to_astra_xhigh_apart_from_everything_else(self):
+        self.assertEqual(engine.current(scope="reviews")["codex"], {"model": "gpt-6-astra", "effort": "xhigh"})
+        self.assertEqual(engine.current()["codex"], {"model": "gpt-6.1-sol", "effort": "medium"})
+
+    def test_switching_reviews_leaves_the_other_plugins_alone_and_back(self):
+        engine.set_model("sol", "high", scope="reviews")
+        self.assertEqual(engine.current(scope="reviews")["codex"], {"model": "gpt-6.1-sol", "effort": "high"})
+        self.assertFalse(self.all_file.exists())
+        engine.choose("claude", scope="reviews")
+        self.assertEqual((engine.engine(scope="reviews"), engine.engine()), ("claude", "codex"))
+        engine.set_effort("low")
+        self.assertEqual(engine.current()["codex"]["effort"], "low")
+        self.assertEqual(engine.current(scope="reviews")["codex"]["effort"], "high")
+
+    def test_the_scope_word_comes_first(self):
+        self.assertEqual(engine.split_scope(["reviews", "astra"]), ("reviews", ["astra"]))
+        self.assertEqual(engine.split_scope(["review", "xhigh"]), ("reviews", ["xhigh"]))
+        self.assertEqual(engine.split_scope(["astra"]), ("all", ["astra"]))
+        self.assertEqual(engine.split_scope([]), ("all", []))
+
+    def test_cli_takes_the_scope(self):
+        with mock.patch("builtins.print") as printed:
+            self.assertEqual(engine.model_main(["reviews", "sol", "--effort", "high"]), 0)
+        self.assertIn("PR reviews now run on codex (gpt-6.1-sol, high effort)", printed.call_args[0][0])
+        with mock.patch("builtins.print") as printed:
+            engine.effort_main(["reviews"])
+        self.assertTrue(printed.call_args[0][0].startswith("PR reviews run on"))
+        self.assertFalse(self.all_file.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

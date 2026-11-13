@@ -164,6 +164,8 @@ class Hub:
             "heartbeat_at": time.time(),
             "engine": engine.current(),
             "engine_text": engine.describe(),
+            "review_engine": engine.current(scope="reviews"),
+            "review_engine_text": engine.describe(engine.current(scope="reviews")),
             "engine_options": engine.options(),
             "slots": self.scheduler.slots,
             "running": self.scheduler.running(),

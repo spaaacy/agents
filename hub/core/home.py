@@ -59,7 +59,16 @@ def button(text: str, action_id: str, *, style: str | None = None, value: str = 
 
 
 def engine_blocks(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
-    choice = snapshot["engine"]
+    """The engine, model and effort pickers: every plugin's setting, then the PR reviews' own."""
+    blocks = picker_blocks(snapshot, snapshot["engine"], snapshot.get("engine_text"), "all")
+    if snapshot.get("review_engine"):
+        blocks += picker_blocks(snapshot, snapshot["review_engine"], snapshot.get("review_engine_text"), "reviews")
+    return blocks
+
+
+def picker_blocks(snapshot: dict[str, Any], choice: dict[str, Any], text: str | None, scope: str) -> list[dict[str, Any]]:
+    # Action ids carry the scope after a dot ("model.reviews"), so the reviews row switches only the reviews setting.
+    suffix = "" if scope == "all" else f".{scope}"
     name = choice["engine"]
     pick = choice.get(name, {})
     models = snapshot.get("engine_options", {}).get(name, [])
@@ -69,20 +78,21 @@ def engine_blocks(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     efforts = info["efforts"] if info else ["low", "medium", "high", "xhigh", "max"]
     default_label = "default effort" + (f" ({info['default_effort']})" if info and info.get("default_effort") else "")
     effort_options = [option("default", default_label)] + [option(e, f"{e} effort") for e in efforts]
-    model_select: dict[str, Any] = {"type": "static_select", "action_id": "model",
+    model_select: dict[str, Any] = {"type": "static_select", "action_id": f"model{suffix}",
                                     "placeholder": {"type": "plain_text", "text": "default model"},
                                     "options": model_options}
     current_model = next((o for o in model_options if o["value"] == pick.get("model")), None)
     if current_model:
         model_select["initial_option"] = current_model
-    effort_select = {"type": "static_select", "action_id": "effort", "options": effort_options,
+    effort_select = {"type": "static_select", "action_id": f"effort{suffix}", "options": effort_options,
                      "initial_option": next((o for o in effort_options if o["value"] == (pick.get("effort") or "default")),
                                             effort_options[0])}
+    title = "*Agents run on*" if scope == "all" else "*PR reviews run on*"
     return [
-        section(f"*Agents run on* {escape(snapshot.get('engine_text', name))}"),
+        section(f"{title} {escape(text or name)}"),
         {"type": "actions", "elements": [
-            button("Codex", "engine:codex", style="primary" if name == "codex" else None),
-            button("Claude", "engine:claude", style="primary" if name == "claude" else None),
+            button("Codex", f"engine{suffix}:codex", style="primary" if name == "codex" else None),
+            button("Claude", f"engine{suffix}:claude", style="primary" if name == "claude" else None),
             model_select, effort_select]},
     ]
 
@@ -145,11 +155,15 @@ def build_view(hub: Hub, snapshot: dict[str, Any] | None = None) -> dict[str, An
 def action_words(action: dict[str, Any]) -> list[str] | None:
     """The control command a Home tab button or menu stands for; None for refresh or anything unknown."""
     action_id = str(action.get("action_id", ""))
-    if action_id in ("model", "effort"):
-        value = (action.get("selected_option") or {}).get("value")
-        return [action_id, value] if value else None
     kind, _, arg = action_id.partition(":")
-    if kind in ("engine", "pause", "resume", "retry") and arg:
+    kind, _, scope = kind.partition(".")
+    scoped = [scope] if scope in engine.SCOPES and scope != "all" else []
+    if kind in ("model", "effort") and not arg:
+        value = (action.get("selected_option") or {}).get("value")
+        return [kind, *scoped, value] if value else None
+    if kind == "engine" and arg:
+        return [kind, *scoped, arg]
+    if kind in ("pause", "resume", "retry") and arg and not scope:
         return [kind, arg]
     return None
 

@@ -49,6 +49,9 @@ class AgentTask:
     claude_allowed_tools: list[str] = field(default_factory=list)
     claude_settings: Path | None = None
     engine: str | None = None             # pin an engine; default is the switch's choice
+    # Pin a model and effort (an engine.current() choice, e.g. the "reviews" setting). Honored by Claude runs and
+    # Codex review mode, which pass them on the command line; other Codex modes read the shared home's config.
+    choice: dict[str, Any] | None = None
     write_dirs: list[str] = field(default_factory=list)  # act mode: more folders it may write in
     repos: list[str] = field(default_factory=list)        # act mode: checkouts whose git data it may write
 
@@ -187,7 +190,7 @@ def claude_command(task: AgentTask, session_id: str | None, mcp_path: Path | Non
         cmd += ["--resume", session_id]
     if task.schema is not None:
         cmd += ["--json-schema", json.dumps(task.schema)]
-    cmd += engine.claude_model_args()
+    cmd += engine.claude_model_args(task.choice)
     # Takes every following argument, so it stays last.
     return cmd + ["--allowedTools", *task.claude_allowed_tools]
 
@@ -249,7 +252,7 @@ def run_claude(task: AgentTask, cancel: threading.Event | None = None, execute: 
 
 def codex_review_command(task: AgentTask, output: Path, schema: Path | None, session_id: str | None) -> list[str]:
     """Codex in a throwaway checkout: normal protections, automatic approval review, network on."""
-    choice = engine.current()["codex"]
+    choice = (task.choice or engine.current())["codex"]
     cmd = [engine.CODEX, "exec", "--approve-for-me", "--json", "--color", "never",
            "-m", choice["model"], "-c", f'model_reasoning_effort="{choice["effort"]}"',
            "-c", "sandbox_workspace_write.network_access=true",

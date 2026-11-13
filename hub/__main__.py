@@ -6,6 +6,7 @@
   agents engine [codex|claude] [--model M] [--effort E]
   agents model [name] [--effort E]   list the models, or pick one (sol, astra, opus...; picks its engine too)
   agents effort [level|default]      the current model's effort (low, medium, high, xhigh, max; ultra on some Codex models)
+  agents engine|model|effort reviews ...   the same, for PR reviews only (their own setting)
   agents jobs [plugin] | job <id> | retry <id> | cancel <id> | pause <plugin> | resume <plugin>
   agents open                  the dashboard in the browser
   agents watch [--once]        live view of jobs in this terminal
@@ -109,9 +110,10 @@ def main(argv: list[str] | None = None) -> int:
         hub = Hub(cfg)
         ok = True
         print(f"agents run on {engine.describe()}")
+        print(engine.runs_on("reviews"))
         for name, binary in (("codex", engine.CODEX), ("claude", engine.CLAUDE)):
             found = Path(binary).exists()
-            ok &= found or engine.engine() != name
+            ok &= found or name not in (engine.engine(), engine.engine(scope="reviews"))
             print(f"{name} CLI: {'found' if found else 'MISSING'} ({binary})")
         if hub.slack is not None:
             try:

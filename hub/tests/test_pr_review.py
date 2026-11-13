@@ -273,6 +273,9 @@ class Handle(unittest.TestCase):
         old = patch.object(pr_plugin, 'OLD_DB', self.root / 'no-old.sqlite3')
         old.start()
         self.addCleanup(old.stop)
+        reviews = patch.object(pr_plugin.engine, 'REVIEW_CHOICE_FILE', self.root / 'engine-reviews.json')
+        reviews.start()
+        self.addCleanup(reviews.stop)
         self.hub = Hub(HUB_CFG, state_dir=self.root / 'hub', with_slack=False)
         self.plugin = self.hub.plugins['pr_review']
         self.plugin.config['reviews_dir'] = str(self.root / 'reviews')  # never the real cache
@@ -354,7 +357,9 @@ class Handle(unittest.TestCase):
     def test_claude_gets_the_skills_inline_and_its_allow_list(self):
         first = agent.AgentResult('claude', text='the review', session='claude:s1')
         second = agent.AgentResult('claude', session='claude:s1', structured=DRAFT)
-        with patch.object(pr_plugin.engine, 'engine', return_value='claude'):
+        claude = {"engine": "claude", "codex": {"model": "gpt-6-astra", "effort": "xhigh"},
+                  "claude": {"model": "opus", "effort": "high"}}
+        with patch.object(pr_plugin.engine, 'current', return_value=claude):
             ctx = FakeContext(self.root / 'run', [first, second])
             with patch.object(domain, 'github', new_callable=AsyncMock, return_value=PR_JSON), \
                  patch.object(domain, 'prepare', new_callable=AsyncMock, return_value=self.root), \
@@ -366,6 +371,7 @@ class Handle(unittest.TestCase):
         self.assertIn('<skill name="review">', review.prompt)
         self.assertIn('<skill name="post-review">', draft.prompt)
         self.assertEqual(review.claude_settings, pr_plugin.CLAUDE_SETTINGS)
+        self.assertEqual((review.engine, review.choice), ('claude', claude), "the reviews setting picks the engine")
         self.assertTrue(review.claude_allowed_tools)
         settings = json.loads(pr_plugin.CLAUDE_SETTINGS.read_text())
         for denied in ('Edit', 'Write', 'Bash(git push *)', 'Bash(gh api *)', 'Bash(gh pr review *)'):
@@ -445,6 +451,30 @@ class Handle(unittest.TestCase):
         self.assertFalse(self.plugin.status()['posting_authorized'])
         self.assertIn('off', commands['disable']([]))
         self.assertFalse(self.plugin.status()['enabled'])
+
+
+
+class Dependencies(unittest.TestCase):
+    def test_review_checkout_gets_the_venv_linked_and_node_modules_copied(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            local, checkout = Path(tmp) / "main", Path(tmp) / "checkout"
+            (local / "node_modules" / "vitest").mkdir(parents=True)
+            (local / "node_modules" / "vitest" / "index.js").write_text("ok")
+            (local / ".venv").mkdir()
+            checkout.mkdir()
+            (checkout / "package.json").write_text("{}")
+            asyncio.run(domain.reuse_dependencies(local, checkout))
+            self.assertTrue((checkout / ".venv").is_symlink())
+            self.assertFalse((checkout / "node_modules").is_symlink(), "a copy: vite refuses a link outside the checkout")
+            self.assertEqual((checkout / "node_modules" / "vitest" / "index.js").read_text(), "ok")
+
+    def test_a_repo_without_package_json_gets_no_node_modules(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            local, checkout = Path(tmp) / "main", Path(tmp) / "checkout"
+            (local / "node_modules").mkdir(parents=True)
+            checkout.mkdir()
+            asyncio.run(domain.reuse_dependencies(local, checkout))
+            self.assertFalse((checkout / "node_modules").exists())
 
 
 class Migration(unittest.TestCase):

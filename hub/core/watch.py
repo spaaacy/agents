@@ -66,7 +66,7 @@ def plugin_names(status: dict[str, Any] | None) -> list[str]:
 
 
 def header(store: Store, status: dict[str, Any] | None) -> list[str]:
-    lines = [f"agents run on {engine.describe()}"]
+    lines = [f"agents run on {engine.describe()} · {engine.runs_on('reviews')}"]
     if status:
         slack = status.get("slack") or {}
         slack_text = ("Slack @" + str(slack.get("bot") or "?")) if slack.get("connected") else \

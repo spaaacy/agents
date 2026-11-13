@@ -29,9 +29,10 @@ agents engine claude                                     # Claude
 agents model                                             # every model of both engines with its effort levels
 agents model opus                                        # pick a model by id or short name (sol, astra, opus...); switches the engine to match
 agents effort xhigh                                      # the current model's effort; `default` goes back to the model's own
+agents model reviews astra --effort xhigh                # PR reviews only: `reviews` first works with engine, model and effort
 ```
 
-The choice is read before every job, so it applies to the next one with no restart; a job already running finishes on its engine. It is stored in `~/.agents/state/engine.json`. The dashboard's Codex/Claude toggle with its model and effort pickers, and Slack's `!engine`, `!model` and `!effort`, do the same. Codex's model list is the one its CLI caches (`~/.codex/models_cache.json`); Claude's is its aliases (fable, opus, sonnet, haiku) and full ids. How each engine is locked down for unattended runs is described in `~/.agents/README.md` ("Background agents: the hub") and `core/engine.py`.
+The choice is read before every job, so it applies to the next one with no restart; a job already running finishes on its engine. It is stored in `~/.agents/state/engine.json`. PR reviews have a setting of their own (`~/.agents/state/engine-reviews.json`, Codex on gpt-6-astra at xhigh effort by default), changed the same way with `reviews` as the first word; the other plugins never read it. The dashboard's Codex/Claude toggle with its model and effort pickers, and Slack's `!engine`, `!model` and `!effort`, do the same. Codex's model list is the one its CLI caches (`~/.codex/models_cache.json`); Claude's is its aliases (fable, opus, sonnet, haiku) and full ids. How each engine is locked down for unattended runs is described in `~/.agents/README.md` ("Background agents: the hub") and `core/engine.py`.
 
 ## Dashboard
 
@@ -53,6 +54,7 @@ In the bot's DM, a message from Aakif that starts with `!` is a command, never a
 !jobs [plugin]          the last jobs
 !job <id>               one job: state, link, error, resume command
 !engine [codex|claude] [--effort E] [--model M]
+!engine reviews ... / !model reviews ... / !effort reviews ...   the same, for PR reviews only
 !retry <id>             run a finished job again
 !cancel <id>            stop a running or queued job
 !pause <plugin>         stop starting new jobs for it (its sources keep queueing)

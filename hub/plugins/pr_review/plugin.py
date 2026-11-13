@@ -3,8 +3,8 @@
 Source: a thread searches #devs through Codex's Slack sign-in once a minute and
 queues one hub job per (message, PR) that mentions the owner. Handle: one
 review of the PR's exact head in its own checkout, two agent turns (the review
-skill, then post-review's draft as structured output) on the engine the switch
-names, the draft checks, and a GitHub COMMENT review when posting is on.
+skill, then post-review's draft as structured output) on the reviews setting
+(engine, model and effort of its own: `!model reviews astra`), the draft checks, and a GitHub COMMENT review when posting is on.
 Everything the checks and the publisher rely on is in domain.py.
 
 The review queue keeps its own SQLite file (settings, requests, reviewed
@@ -242,18 +242,20 @@ class PrReview(Plugin):
                 return JobResult("done", link=link, summary=f"already reviewed at {head[:12]} ({existing['status']})")
 
             directory.mkdir(parents=True, exist_ok=True)
-            name = engine.engine()
+            choice = engine.current(scope="reviews")  # reviews have their own engine/model/effort setting
+            name = choice["engine"]
             with db:
                 db.execute("INSERT INTO jobs(key,repo,number,head,base,status,directory,updated,reviewer) "
                            "VALUES(?,?,?,?,?,'reviewing',?,?,?)",
                            (key, request["repo"], request["number"], head, base, str(directory), time.time(), name))
                 db.execute("UPDATE requests SET status='running',job_key=? WHERE id=?", (key, request["id"]))
             LOG.info("Reviewing %s at %s with %s", pr["html_url"], head[:12], name)
-            ctx.note(f"reviewing at {head[:12]} with {name}")
+            ctx.note(f"reviewing at {head[:12]} with {engine.describe(choice)}")
             checkout = await domain.prepare(cfg, pr, directory)
 
             common: dict[str, Any] = {
                 "cwd": checkout, "mode": "review", "timeout": int(cfg["review_timeout_seconds"]), "engine": name,
+                "choice": choice,
                 "claude_allowed_tools": list(cfg.get("claude_allowed_tools", [])),
                 "claude_settings": CLAUDE_SETTINGS, "add_dirs": [str(domain.SKILLS)],
             }

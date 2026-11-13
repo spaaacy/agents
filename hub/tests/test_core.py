@@ -123,6 +123,9 @@ class Agent_(unittest.TestCase):
         patcher = mock.patch.object(engine, "CHOICE_FILE", Path(self.dir.name) / "engine.json")
         patcher.start()
         self.addCleanup(patcher.stop)
+        reviews = mock.patch.object(engine, "REVIEW_CHOICE_FILE", Path(self.dir.name) / "engine-reviews.json")
+        reviews.start()
+        self.addCleanup(reviews.stop)
 
     def test_sessions_are_tagged_and_never_cross_engines(self):
         self.assertEqual(agent.split_session("codex:abc"), ("codex", "abc"))
@@ -170,6 +173,25 @@ class Agent_(unittest.TestCase):
         self.assertIn("--approve-for-me", cmd)
         self.assertEqual(cmd[cmd.index("-C") + 1], "/checkout")
         self.assertIn("gpt-6.1-sol", cmd)
+
+    def test_review_mode_runs_on_the_pinned_choice(self):
+        choice = {"engine": "codex", "codex": {"model": "gpt-6-astra", "effort": "xhigh"},
+                  "claude": {"model": "opus", "effort": "high"}}
+        task = agent.AgentTask("review it", Path("/checkout"), mode="review", choice=choice)
+        cmd = agent.codex_review_command(task, Path("/o"), None, None)
+        self.assertEqual(cmd[cmd.index("-m") + 1], "gpt-6-astra")
+        self.assertIn('model_reasoning_effort="xhigh"', cmd)
+        claude = agent.claude_command(task, None, None)
+        self.assertEqual(claude[claude.index("--model") + 1], "opus")
+        self.assertEqual(claude[claude.index("--effort") + 1], "high")
+
+    def test_review_commands_switch_only_the_reviews_setting(self):
+        hub = Hub({"owner": {"slack_user_id": "U1"}, "plugins": {}}, state_dir=Path(self.dir.name) / "hub", with_slack=False)
+        self.assertIn("PR reviews now run on codex (gpt-6.1-sol", hub.command(["model", "reviews", "sol"]))
+        self.assertIn("PR reviews now run on claude", hub.command(["engine", "reviews", "claude"]))
+        self.assertEqual((engine.engine(scope="reviews"), engine.engine()), ("claude", "codex"))
+        self.assertIn("PR reviews run on claude", hub.command(["status"]))
+        self.assertIn("PR reviews run on claude", hub.command(["effort", "reviews"]))
 
     def test_claude_turn_reads_the_result_event(self):
         def fake(cmd, stdin, cwd, timeout, on_line, env, cancel):

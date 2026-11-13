@@ -9,6 +9,7 @@ In the bot's DM, a message from the owner that starts with the control prefix
   !engine [codex|claude] [--effort E] [--model M]
   !model [name] [--effort E]   list the models, or pick one (sol, astra, opus...)
   !effort [level|default]
+  !engine reviews ... / !model reviews ... / !effort reviews ...   the same, for PR reviews only
   !retry <id>             run a finished job again
   !cancel <id>            stop a running or queued job
   !pause <plugin>         stop starting new jobs for it (its sources keep queueing)
@@ -63,7 +64,8 @@ def run_command(hub: Hub, words: list[str]) -> str:
     cmd, args = words[0].lower(), words[1:]
     store = hub.store
     if cmd == "status":
-        lines = [f"agents run on {engine.describe()} · {len(hub.scheduler.running())} running"]
+        lines = [f"agents run on {engine.describe()} · {len(hub.scheduler.running())} running",
+                 engine.runs_on("reviews")]
         counts = store.counts()
         for name, plugin in hub.plugins.items():
             c = counts.get(name, {})
@@ -89,9 +91,11 @@ def run_command(hub: Hub, words: list[str]) -> str:
             result = agent.AgentResult(job.engine or "codex", session=job.session)
             lines.append(f"resume: `{result.resume_command()}`")
         return "\n".join(lines)
+    if cmd in ("engine", "model", "effort"):
+        scope, args = engine.split_scope(args)
     if cmd == "engine":
         if not args:
-            return f"agents run on {engine.describe()}"
+            return engine.runs_on(scope)
         name, model, effort = args[0], None, None
         rest = args[1:]
         for flag in ("--model", "--effort"):
@@ -99,27 +103,27 @@ def run_command(hub: Hub, words: list[str]) -> str:
                 value = rest[rest.index(flag) + 1]
                 model, effort = (value, effort) if flag == "--model" else (model, value)
         try:
-            engine.choose(name, model, effort)
+            engine.choose(name, model, effort, scope=scope)
         except ValueError as exc:
             return str(exc)
-        return f"agents now run on {engine.describe()}; the next job uses it"
+        return f"{engine.runs_on(scope, now=True)}; the next job uses it"
     if cmd == "model":
         if not args:
-            return engine.listing()
+            return engine.listing(scope=scope)
         effort = args[args.index("--effort") + 1] if "--effort" in args and args.index("--effort") + 1 < len(args) else None
         try:
-            engine.set_model(args[0], effort)
+            engine.set_model(args[0], effort, scope=scope)
         except ValueError as exc:
             return str(exc)
-        return f"agents now run on {engine.describe()}; the next job uses it"
+        return f"{engine.runs_on(scope, now=True)}; the next job uses it"
     if cmd == "effort":
         if not args:
-            return f"agents run on {engine.describe()}"
+            return engine.runs_on(scope)
         try:
-            engine.set_effort(args[0])
+            engine.set_effort(args[0], scope=scope)
         except ValueError as exc:
             return str(exc)
-        return f"agents now run on {engine.describe()}; the next job uses it"
+        return f"{engine.runs_on(scope, now=True)}; the next job uses it"
     if cmd in ("retry", "cancel") and args:
         job = store.find(args[0])
         if not job:
