@@ -1,13 +1,13 @@
 ---
 name: pickup
-description: Pick up a Linear ticket or project in two steps. First gather the full context - the ticket and its whole comment thread, the PRs already up, the code as it stands, past work on it - and report, changing nothing. Then, only after the user says go, create a worktree per ticket, build it test-first, and open a draft PR. Use when the user points at a Linear ticket or project, or asks to pick up, start, or work on one.
+description: Pick up a Linear ticket or project in two steps. First gather the full context - the ticket and its whole comment thread, the PRs already up, the code as it stands, past work on it - and lay out how the change would work from the product side, like /impact (who notices, defaults, what is left out, the new tables or columns, shipping), changing nothing. Then, only after the user says go, create a worktree per ticket, build it test-first, and open a draft PR. Use when the user points at a Linear ticket or project, or asks to pick up, start, or work on one.
 ---
 
 Target: `$ARGUMENTS`. An issue key (`ENG-2130`), a project key (`P-ENG-69`), a project name, or a Linear URL. A trailing `go` / `work` / `start`, or a list of keys, means step 2. Nothing means the ticket this conversation is about (`Shared skill arguments` in `~/.agents/AGENTS.md`); only when there is none, ask which ticket and stop.
 
 Two steps, always in order, each ending with a stop:
 
-1. **Context** (the default): read everything, report, change nothing — no branch, no worktree, no edits, no Linear writes, no PR.
+1. **Context** (the default): read everything, lay out how it would work, change nothing — no branch, no worktree, no edits, no Linear writes, no PR.
 2. **Work**: runs only when the user says so after step 1 ("go", "start", or this skill again with keys). If step 1 has not run in this conversation, run it first and stop there.
 
 Flow: this is the first skill in the PR lifecycle. It ends with a draft PR; the author then runs `/review <pr>` on it, `/fix <pr>` keeps it level with `development` and its required checks green while reviewers read it, and fixes any red in its `Eval sample` the PR itself caused, their comments are worked with `/address-review <pr>` and checked with `/verify-fixes <pr>`, the user merges, and `/linear-sweep` moves the ticket once it ships. The worktree this skill creates is the one every later skill reuses, and `/cleanup` removes it once the PR has shipped.
@@ -45,30 +45,35 @@ If the tool keeps a memory index for the repo, read it and open every entry nami
 
 Only when the ticket describes a symptom rather than a feature: `monitoring/incidents/`, the monitor JSON the ticket names, Datadog logs and metrics for the window it names, and the database through the `pg-readonly` MCP for the rows it names. Never run `az` (it needs explicit approval in the conversation, read-only included, and step 1 does not ask for approvals).
 
-## Report, then stop
+## Lay out how it would work, then stop
 
-Open with one line: `<KEY> — <title> · <state> · <n> PRs up · <n> open questions`. For a project: `<PROJECT> — <n> issues · <n> done · <n> in flight · <n> open`.
-
-Then:
+The report is how the change would work once shipped, from the product side, the way `/impact` describes a finished PR (`~/.agents/skills/impact/SKILL.md`): who notices, what changes for them, what is left alone. It is the plan Aakif says go to, so step 2 builds what it describes. Exactly this shape:
 
 ```
-Ask          — what the ticket wants, one paragraph, in the reporter's words. Name the
-               carrier-, customer-, or rep-facing behaviour that changes.
-Already done — code that exists, PRs merged or open, which part of the ask each covers.
-Where it lands — the files and modules the work touches, each with the rule that governs it
-               (single chokepoint, migration workflow, prompt sections + goldens, eval
-               scenarios, monitoring, v1 schema). A map, not a plan.
-Constraints  — repo rules binding this change, cross-repo deploy order, migrations, flags,
-               anything that must ship together.
-Open questions — every product decision (what a carrier, customer, or rep sees; defaults;
-               retention; rollout) with a recommendation. Technical choices are never
-               questions here; they get decided in step 2 and noted.
-Not read     — links that could not be opened, environments not checked, things inferred.
-Next         — the branch and worktree step 2 would create per ticket, in the order it would
-               work them. Then the go question below.
+<KEY> — <title> · <state> · <n> PRs up · <n> calls for you
+<one sentence: what picking this up would deliver, in product words>
+
+- <who notices>: <what changes for them>
+- ...
+- Defaults: <on or off by default, for which organizations, who can switch it and where>
+- Left out: <what this deliberately does not cover, including parts of the ask it drops>
+- Your call: <one product decision, stated as the recommendation the bullets above assume>
+- Already there: <code or PRs, merged or open, that already cover part of the ask, and which part>
+- Data changes: <each new table or column: its name and what it holds; "none" when nothing new is stored>
+- Shipping: <the repos and PRs it would take in build order, what must deploy first, a backfill to run after the deploy, a flag>
+- Not read: <links that could not be opened, environments not checked>
 ```
 
-Then ask the go with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options): start every ticket in the order above (Recommended), start only the tickets named, or stop here. Wait for that answer. Do not create a branch, a worktree, or a file, do not comment on Linear or move its state, and do not start work because the context looks clear.
+Rules:
+
+- Present tense, as if shipped ("reps see", not "reps would see"). Rank by how many people notice, carriers and customers first. One sentence per bullet, under about 25 words, twelve bullets at most; drop Already there and Not read when empty.
+- People and what they experience, never code: no file paths, function, class or module names, tests, metrics or PR internals. Quote carrier- or customer-facing copy exactly when the ticket specifies it, and keep its numbers, timings and limits.
+- Your call: one bullet per product decision (what a carrier, customer or rep sees; defaults; retention; rollout), each phrased as the recommendation the bullets above already assume. Technical choices are never calls; step 2 makes and notes them.
+- Data changes is the one place a table or column is named: every new table and every new column the work adds (or removes), in backticks with a few words on what it holds, one bullet each when there are several. Indexes, constraints and type changes are left out, and so is a value stored in an existing settings record, which is not a new column. These are planned, so a name that could still change is marked "(planned)".
+- Never promise more than the ask, never soften a limit the ticket states, and mark anything inferred rather than read with "(inferred)".
+- A project lays out each open ticket as one sentence in work order, then its Your call, Data changes and Shipping lines; a ticket is still built one at a time.
+
+Then ask, in one call of the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options), the go plus each Your call decision as its own question, the recommended option first, up to the tool's limit: the go is build it as laid out (Recommended), build only the tickets named, or stop here. Decisions that did not fit are asked first thing in step 2. If an answer changes what the layout says, reprint the bullets that changed before building. Wait for the answer. Do not create a branch, a worktree, or a file, do not comment on Linear or move its state, and do not start work because the context looks clear.
 
 # Step 2: work
 
@@ -76,7 +81,7 @@ Runs on the user's go. A go that names tickets works only those, in the order gi
 
 ## Decisions first
 
-Put every open question from step 1, and any new one found while planning, to the user in one round before touching code. Use the client's structured question tool when it has one (Claude Code: `AskUserQuestion`, up to 4 questions, 2–4 options each, the recommended option first and marked "(Recommended)", each option saying what the carrier, customer, or rep would experience). Otherwise ask in chat as a numbered list with lettered options and a recommendation, then stop and wait. Never ask about technical choices — naming, structure, where code lives, which helper to use, how to test it — decide those and note the rationale in the report. No open questions: say so in one line and continue.
+The calls answered with the go are settled. Put the ones that did not fit in that round, and any new one found while planning, to the user in one round before touching code. Use the client's structured question tool when it has one (Claude Code: `AskUserQuestion`, up to 4 questions, 2–4 options each, the recommended option first and marked "(Recommended)", each option saying what the carrier, customer, or rep would experience). Otherwise ask in chat as a numbered list with lettered options and a recommendation, then stop and wait. Never ask about technical choices — naming, structure, where code lives, which helper to use, how to test it — decide those and note the rationale in the report. No open questions: say so in one line and continue.
 
 ## One ticket, one branch, one worktree
 
@@ -103,7 +108,7 @@ Red before green, every time the change has an observable behaviour:
 
 ## Build
 
-The smallest change that delivers the ticket. No drive-by refactors, no behaviour nobody asked for, no scope beyond the ask — a better idea found on the way is a line in the report or a drafted ticket the user approves before it is created (with an assignee, the user unless they name someone else; never unassigned), not a bonus commit. Follow the repo rules gathered in step 1: the migration workflow, prompt goldens regenerated deliberately and reviewed as the diff they are, `poe docs-export` for a v1 schema change, eval adapters mirrored when entrypoint state assembly moves, a monitor in the same PR for a new or renamed metric. Run the touched modules' tests as you go, the way `Running checks` in `~/.agents/AGENTS.md` says; CI runs the full ladder and the eval sample on the PR. A red check is fixed or reported, never skipped. Commit per ticket or per logical step, with the repo's commit convention and the session's attribution lines, staging specific files — never `git add -A`.
+The smallest change that delivers the ticket as laid out in step 1. If the code forces something the layout did not say (a carrier, customer or rep sees something different, a default changes, a new table or column it did not list), stop that ticket and ask before building it. No drive-by refactors, no behaviour nobody asked for, no scope beyond the ask — a better idea found on the way is a line in the report or a drafted ticket the user approves before it is created (with an assignee, the user unless they name someone else; never unassigned), not a bonus commit. Follow the repo rules gathered in step 1: the migration workflow, prompt goldens regenerated deliberately and reviewed as the diff they are, `poe docs-export` for a v1 schema change, eval adapters mirrored when entrypoint state assembly moves, a monitor in the same PR for a new or renamed metric. Run the touched modules' tests as you go, the way `Running checks` in `~/.agents/AGENTS.md` says; CI runs the full ladder and the eval sample on the PR. A red check is fixed or reported, never skipped. Commit per ticket or per logical step, with the repo's commit convention and the session's attribution lines, staging specific files — never `git add -A`.
 
 ## Push and open a draft PR
 

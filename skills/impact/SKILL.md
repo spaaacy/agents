@@ -1,6 +1,6 @@
 ---
 name: impact
-description: Explain what a pull request (or every open PR for a Linear ticket) delivers purely from the product perspective, as TL;DR bullet points - what changes for carriers, customers, reps and admins, the defaults and switches, who is left out, and what it takes to ship - with no code, file names or jargon. Read-only. Use when the user asks what a PR delivers, for a product summary or TL;DR of a PR, or what a change means for users.
+description: Explain what a pull request (or every open PR for a Linear ticket) delivers purely from the product perspective, as TL;DR bullet points - what changes for carriers, customers, reps and admins, the defaults and switches, who is left out, the new tables or columns, and what it takes to ship - with no code, file names or jargon. Read-only. Use when the user asks what a PR delivers, for a product summary or TL;DR of a PR, or what a change means for users.
 ---
 
 Target: $ARGUMENTS. A PR number or URL is that PR; a Linear key (`ENG-1234`) or URL means every open PR for that ticket across the repos. A bare number is looked up in the current repo first, then `envoyai-web`, `envoyai-chrome-plugin`, `envoyai-chat-ui` (backend PRs are in the 2000s, the others are lower; never guess across repos, ask if two match). Nothing means the PR or ticket this conversation is about (`Shared skill arguments` in `~/.agents/AGENTS.md`), else the open PR for the current branch; if there is none, ask which PR with the client's structured question tool and stop.
@@ -27,15 +27,17 @@ Exactly this shape, and nothing else:
 - ...
 - Defaults: <on or off by default, for which organizations, who can switch it and where>
 - Left out: <who or what this deliberately does not cover>
+- Data changes: <each new table or column: its name and what it holds; "none" when nothing new is stored>
 - Shipping: <open/draft/merged; what must deploy first; anything that must merge before or after it>
 ```
 
 Rules:
 
-- Ten bullets at most. One sentence each, under about 25 words. Rank by how many people notice it, carriers and customers first.
+- Eleven bullets at most, the Data changes line included. One sentence each, under about 25 words. Rank by how many people notice it, carriers and customers first.
 - Write about people and what they experience: carriers, reps, admins, the broker, the team. Say what they see, receive, can do, or no longer get.
 - Quote customer-facing copy exactly when the PR adds or changes it (an email line, a message, a button label). Keep numbers, timings and limits as the PR states them.
-- No file paths, function or class names, table or column names, migrations, metrics, tests, PR internals, or code. Say "the escalation email", not the renderer.
+- Data changes is the one place a table or column is named: every table and column the PR's migration adds (or removes), in backticks with a few words on what it holds, one bullet each when there are several. Indexes, constraints and type changes are left out, and so is a value stored in an existing settings record, which is not a new column. Read it from the migration in the diff, not the PR body.
+- Elsewhere, no file paths, function or class names, table or column names, migrations, metrics, tests, PR internals, or code. Say "the escalation email", not the renderer.
 - No jargon; spell out acronyms the first time. A change with no visible effect gets one bullet saying so in a few words (for example "notification emails that fail to send now retry"), or is left out if nobody would notice.
 - A PR that carries several tickets gets one bullet per ticket's change, each starting with what it is, not the ticket key; the ticket keys go in the Shipping line.
 - Never add benefits the PR does not deliver, and never soften a limit the PR states. Mark anything inferred rather than read with "(inferred)".
