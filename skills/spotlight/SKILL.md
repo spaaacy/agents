@@ -134,6 +134,8 @@ Then follow `~/.agents/skills/cleanup/local-stack.md` with the backend's old and
 
 Then, when chat-ui's checkout moved or the stack has a chat-ui PR, follow `chat-ui-link.md` in this folder: it builds chat-ui and points web (a symlink) and the extension (a copy of the build) at it, without building or running either app. When web or the extension also needs `npm ci`, say the link has to be redone after it (rerun `/spotlight`).
 
+Last, build the extension from its main checkout, every run, after the chat-ui link so the build carries the linked chat-ui: `npm --prefix <absolute plugin path> run build:development`. That leaves an unpacked development build in `<plugin>/.output/chrome-mv3-dev` to load in Chrome, so the user can test the spotlighted extension without starting a dev server. Skip it, and say why, when the plugin's checkout was refused or left unresolved, when `node_modules` is missing, or when its `package-lock.json` changed (then `npm ci` comes first, and a rerun of `/spotlight` relinks chat-ui and builds). A failed build is reported with its last error lines, never fixed here. Web is never built or run.
+
 ## 5. Final report
 
 Answer first: `<KEY> — removed <n> worktrees; moved <n> main checkouts; <n> back in worktrees; <n> refused.` Then one line per repo, including refused repos at their actual final position:
@@ -146,8 +148,9 @@ Back in a worktree: <old branch> (#<pr>) → <absolute path>; <setup result>, or
 Branches deleted: <names, or none; kept by default>
 <the local-stack.md report line>
 <the chat-ui-link.md report line, when it ran>
+extension build: built at <sha> (reload it in chrome://extensions) | skipped: <why> | failed: <last error line>
 Refused / kept: <paths or repos and reasons>
 Not checked: <dependencies, unavailable reads>
 ```
 
-Stop there. Never touch Linear, push, merge, create or edit PRs, repair failing checks, or clean up databases beyond what `local-stack.md` does. This skill changes local checkouts, the removed worktrees, the previous spotlight's restored worktrees, the local docker stack through `local-stack.md`, and the chat-ui links through `chat-ui-link.md`, nothing else.
+Stop there. Never touch Linear, push, merge, create or edit PRs, repair failing checks, or clean up databases beyond what `local-stack.md` does. This skill changes local checkouts, the removed worktrees, the previous spotlight's restored worktrees, the local docker stack through `local-stack.md`, the chat-ui links through `chat-ui-link.md`, and the extension's development build, nothing else.

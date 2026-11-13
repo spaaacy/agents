@@ -2,7 +2,7 @@
 
 Web and the extension import `@envoyai/chat-ui` from `node_modules`, and they read its built `dist/`, never its source. Unless chat-ui is built and linked, a chat-ui change sitting in `~/dev/envoyai-chat-ui` is invisible to both, and a page importing a new export fails in the browser (`does not provide an export named …`; in web, one page shows "500 Internal Error" while everything else works).
 
-Run this whenever chat-ui's main checkout moved, or the stack has a chat-ui PR, and again after any commit made in the spotlighted chat-ui checkout. Never run `npm run build`, `npm run dev`, `npm ci` or `npm install` in web or the extension: the link is the whole job, and an install there replaces the link with the published package.
+Run this whenever chat-ui's main checkout moved, or the stack has a chat-ui PR, and again after any commit made in the spotlighted chat-ui checkout. Never run `npm run build`, `npm run dev`, `npm ci` or `npm install` in web or the extension here: the link is the whole job, and an install there replaces the link with the published package. The one build is the extension's `build:development`, which `/spotlight` runs after this procedure (its SKILL.md, step 4), so the unpacked build carries the linked chat-ui.
 
 Paths: `C=~/dev/envoyai-chat-ui`, `W=~/dev/envoyai-web`, `X=~/dev/envoyai-chrome-plugin`, resolved to absolute paths. Skip a consumer whose `node_modules` does not exist and say so.
 
