@@ -2,8 +2,35 @@
   "description": "Shared per-turn hooks from ~/.agents (same scripts Claude Code runs)",
   "hooks": {
     "UserPromptSubmit": [
-      { "hooks": [ { "type": "command", "command": "~/.agents/hooks/style-reminder.sh", "timeout": 5 } ] },
-      { "hooks": [ { "type": "command", "command": "~/.agents/hooks/brainrot.sh", "timeout": 5 } ] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.agents/hooks/style-reminder.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.agents/hooks/brainrot.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.agents/hooks/docker-guard.py",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }

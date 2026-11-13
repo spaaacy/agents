@@ -19,6 +19,18 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.agents/hooks/docker-guard.py",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }

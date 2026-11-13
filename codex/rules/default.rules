@@ -7,3 +7,11 @@ prefix_rule(pattern=["gh", "pr", "create"], decision="allow")
 prefix_rule(pattern=["curl", "-I"], decision="allow")
 prefix_rule(pattern=["curl", "-s"], decision="allow")
 prefix_rule(pattern=["git", "fetch"], decision="allow")
+
+# Never delete the local Docker stack (2026-11-13: "turn down the container" got `docker compose down`).
+# ~/.agents/hooks/docker-guard.py catches the forms these prefixes can't (-f files, sh -c, rm of dockerdata).
+prefix_rule(pattern=["docker", "compose", ["down", "rm"]], decision="forbidden", justification="Deleting Docker containers, images or volumes is Aakif's to run himself. To pause the stack run docker compose stop (resume: docker compose start).", match=["docker compose down", "docker compose rm -f api"], not_match=["docker compose stop", "docker compose up -d --no-build"])
+prefix_rule(pattern=["docker-compose", ["down", "rm"]], decision="forbidden", justification="Deleting Docker containers, images or volumes is Aakif's to run himself. To pause the stack run docker compose stop (resume: docker compose start).", match=["docker-compose down"], not_match=["docker-compose stop"])
+prefix_rule(pattern=["docker", ["rm", "rmi"]], decision="forbidden", justification="Deleting Docker containers, images or volumes is Aakif's to run himself. To pause the stack run docker compose stop (resume: docker compose start).", match=["docker rm -f envoyai-backend-api-1", "docker rmi x"], not_match=["docker run --rm alpine true", "docker ps -a"])
+prefix_rule(pattern=["docker", "system", "prune"], decision="forbidden", justification="Deleting Docker containers, images or volumes is Aakif's to run himself. To pause the stack run docker compose stop (resume: docker compose start).", match=["docker system prune -af"], not_match=["docker system df"])
+prefix_rule(pattern=["docker", ["container", "image", "volume"], ["rm", "remove", "prune"]], decision="forbidden", justification="Deleting Docker containers, images or volumes is Aakif's to run himself. To pause the stack run docker compose stop (resume: docker compose start).", match=["docker volume rm x", "docker container prune -f"], not_match=["docker container ls"])

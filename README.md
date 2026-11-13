@@ -6,7 +6,7 @@ One home for everything I want every coding agent to share: instructions, skills
 |---|---|---|---|---|
 | Instructions | `AGENTS.md` | `~/.claude/CLAUDE.md` imports it | `~/.codex/AGENTS.md` symlink | `~/.gemini/AGENTS.md` + `context.fileName` |
 | Skills | `skills/` (open Agent Skills format) | `~/.claude/skills` symlink | reads `~/.agents/skills` natively | `~/.gemini/skills` symlink |
-| Hooks | `hooks/*.sh` (same scripts everywhere) | `claude/apply.py` merges `claude/settings.hooks.json` | `~/.codex/hooks.json` symlink | n/a |
+| Hooks | `hooks/*.sh`, `hooks/docker-guard.py` (same scripts everywhere) | `claude/apply.py` merges `claude/settings.hooks.json` | `~/.codex/hooks.json` symlink | n/a |
 | Permission rules | `codex/rules/default.rules`, `claude/permissions.json` | `claude/apply.py` merges | `~/.codex/rules` symlink | n/a |
 | MCP servers | `mcp/servers.json` + gitignored `mcp/secrets.env` | `mcp/render.py claude --apply` | `mcp/render.py codex --apply` | `mcp/render.py gemini` |
 
@@ -68,7 +68,7 @@ Your own Claude and Codex sessions reach the hub through the `agents-hub` MCP se
 
 Skills are discovered natively in `~/.agents/skills`; the obsolete `features.skills` entry is removed when applying the setup. Shared skills' `$ARGUMENTS` placeholders mean the arguments supplied by the user, including when invoked as `$skill-name` in Codex. See [local skill discovery](https://learn.chatgpt.com/docs/build-skills).
 
-Current Codex supports the shared `UserPromptSubmit` hooks. Both shell wrappers read their sections from `AGENTS.md` through `hooks/reminder.py`, so editing the instructions updates the per-turn reminder too. The voice is always on; there is no off switch. Hook definitions are in `codex/hooks.json`; use `/hooks` to review their trust status if Codex reports a new or changed definition. The installer does not grant hook trust or bypass approval settings. See [Codex hooks](https://learn.chatgpt.com/docs/hooks).
+Current Codex supports the shared `UserPromptSubmit` hooks and the `PreToolUse` docker guard (`hooks/docker-guard.py`, which refuses deleting Docker containers, images, volumes or `dockerdata`; Codex runs it only once trusted in `/hooks`, and `codex/rules/default.rules` refuses the plain forms either way). Both shell wrappers read their sections from `AGENTS.md` through `hooks/reminder.py`, so editing the instructions updates the per-turn reminder too. The voice is always on; there is no off switch. Hook definitions are in `codex/hooks.json`; use `/hooks` to review their trust status if Codex reports a new or changed definition. The installer does not grant hook trust or bypass approval settings. See [Codex hooks](https://learn.chatgpt.com/docs/hooks).
 
 Validated with Codex CLI 0.153.4: instruction/skill/rule links, hook JSON, repeated config application, and project instruction discovery. Restart Codex after configuration changes to rebuild the initial instruction chain. Run the local checks with `python3 -m unittest discover -s tests`.
 
