@@ -25,7 +25,7 @@ The skills under `skills/` are one lifecycle, and each one names its neighbours 
   /impact <pr>          what a PR delivers for carriers, reps and admins, plus its new tables/columns (read-only)
   /fix <pr|ticket>      keeps PRs level with development and CI green, triages red evals; never merges
   reviewers comment
-  /address-review <pr>  verify the findings, then on go: fix, reply, push
+  /address-review <pr>  verify the findings, then fix, reply, push, and get the required CI checks green
   /verify-fixes <pr>    fresh-eyes check of that round; routes back, and from round 3 closes the review
   the user merges
 /linear-sweep           tickets to the state their code actually reached

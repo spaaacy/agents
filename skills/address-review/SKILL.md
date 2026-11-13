@@ -1,6 +1,6 @@
 ---
 name: address-review
-description: Work through the review comments left on a pull request. It verifies every finding against the current code and reports which are real, asks the user only the product calls, then fixes the confirmed findings, pushes the branch, and posts a reply on every finding, without stopping for a go. Use when the user asks to verify, check, triage, or address PR review comments or feedback.
+description: Work through the review comments left on a pull request. It verifies every finding against the current code and reports which are real, asks the user only the product calls, then fixes the confirmed findings, pushes the branch, posts a reply on every finding, and gets the PR's required (blocking) CI checks green - the backend's Eval sample is not one - without stopping for a go. Use when the user asks to verify, check, triage, or address PR review comments or feedback.
 ---
 
 Target: $ARGUMENTS. A PR number or URL is the PR; a trailing `check` (or a request to only verify) stops after step 1. Nothing means the PR this conversation is about (`Shared skill arguments` in `~/.agents/AGENTS.md`), else the open PR for the current branch (`gh pr view --json number`); if there is none, say so and stop. The repo is the one in the current directory.
@@ -10,16 +10,19 @@ Two steps, always in order:
 1. **Verify**: read every open finding, check it against the code as it is now, report. Nothing changes during this step: no edits, no commits, no GitHub replies, no resolved threads.
 2. **Address**: follows straight on, with no go to wait for, unless the target said `check` or step 1 found nothing to fix (then step 1's report ends the run). Its one stop is the product calls, asked in a single round before any code changes.
 
-Flow: this is the author's side of a review round. The findings come from reviewers' threads (or a `/review` the user points at); `/verify-fixes <pr>` in a fresh conversation is the second pair of eyes on what this skill fixed, and sends the next round back here (`Back to /address-review`) until its closing pass, from round 3 on, ends it. `/fix <pr>` owns CI in the meantime: a red `Eval sample` that no finding covers, and a check that is red for an unrelated reason, are `/fix`'s, not this round's. Where this skill works (a worktree on the PR branch) is where `/pickup` started and where `/cleanup` finishes.
+Flow: this is the author's side of a review round. The findings come from reviewers' threads (or a `/review` the user points at); `/verify-fixes <pr>` in a fresh conversation is the second pair of eyes on what this skill fixed, and sends the next round back here (`Back to /address-review`) until its closing pass, from round 3 on, ends it. A round ends with the PR's required CI checks green on the pushed head ("Clear the required checks", below); `/fix <pr>` keeps it green afterwards and owns the rest of CI: the `Eval sample`, which is not a required check, and rebases nobody asked for. Where this skill works (a worktree on the PR branch) is where `/pickup` started and where `/cleanup` finishes.
 
 ## Step 1: verify
 
 ### Gather
 
 ```
-gh pr view <pr> --json number,title,url,headRefName,baseRefName,headRefOid,body,author
+gh pr view <pr> --json number,title,url,headRefName,baseRefName,headRefOid,body,author,mergeable,mergeStateStatus
 gh pr diff <pr>
+gh pr checks <pr> --required
 ```
+
+The last one is GitHub's own list of the checks that block the merge (on the backend's `development`: Unit, Integration, Markers, Check and the PR title check; `Eval sample` is not on it). A required check already red on the head is part of this round's work, fixed in the same push as the findings.
 
 Inline review threads, with resolved and outdated state (the REST comments API cannot tell you either):
 
@@ -62,7 +65,7 @@ Open with one line: `<n> findings: <n> confirmed · <n> partly · <n> product ca
    Plan: <the smallest fix, or "no change: <why>", or "your call: <the question>">
 ```
 
-End with **Not verified** (anything inferred rather than checked, tests not run) and the product questions step 2 will ask, then go on to step 2.
+Then one **CI** line: the required checks on the head, passing, running or red (name the red ones and what failed). End with **Not verified** (anything inferred rather than checked, tests not run) and the product questions step 2 will ask, then go on to step 2.
 
 ## Step 2: address
 
@@ -76,7 +79,7 @@ If a main checkout is already on the PR branch (`/spotlight` put it there), work
 
 ### Fix
 
-Work the Confirmed and Partly findings, plus the product calls the user said yes to, in step 1's order. For each one:
+Work the Confirmed and Partly findings, plus the product calls the user said yes to, in step 1's order, then any required check step 1 found red (fixed as "Clear the required checks" says). For each one:
 - Make the smallest change that fixes the confirmed problem. No drive-by refactors, no fixes for findings that were ruled Not an issue, and no behavior change nobody asked for. If the fix turns out to need a product decision after all, stop that finding and ask.
 - Follow the repo's rules for the kind of change: tests for changed behavior, eval scenarios for prompt or agent behavior changes, regenerated generated files, migrations per the repo's workflow. A finding about agent or prompt behaviour (a missing scenario, a reviewer citing an eval red, a prompt rule the reviewer wants changed) is fixed under the "Measure" section of `~/.agents/skills/fix/evals.md`: the scenario first, several trials, the should-hold siblings beside it, and an A/B against the base prompt when a sibling moves; a single green trial is not a fix.
 - Run checks the way `Running checks` in `~/.agents/AGENTS.md` says: every fix's tests in one batched call, `-n 8` on the backend, only the failing ids while iterating, and no local re-run of what CI already passed on the same commit.
@@ -90,6 +93,16 @@ Write a short reply for every finding, in plain professional English whatever th
 
 Push the branch from the worktree first (`git push origin <headRefName>`, never force, never a different branch), so every commit a reply names is on GitHub, then post each reply to its own thread (`gh api repos/<owner>/<repo>/pulls/<number>/comments/<databaseId>/replies -f body=...` for inline threads, `gh pr comment` otherwise). No go is needed for either. Hold both, and ask with the structured question tool instead, only when pushing would put broken work in front of reviewers: a touched test is still red, a fix was left half-done, or the branch moved on the remote since step 1.
 
+### Clear the required checks
+
+The round is not done until every required check passes on the pushed head. Required means `gh pr checks <pr> --required`, read live; a check that is not on it (the backend's `Eval sample` above all) never holds the round: it is not waited on and not fixed here, that is `/fix`'s, and the report only names it when it is red.
+
+- Wait for them: `gh pr checks <pr> --required --watch`, in the background where the client allows (the backend's Unit takes about 5 minutes). Pending or `UNKNOWN` is still running.
+- A PR that conflicts with its base (`mergeable` CONFLICTING, `mergeStateStatus` DIRTY) runs no checks: rebase it first, following `~/.agents/skills/fix/rebase.md`.
+- A red required check is fixed whatever caused it (this round's fixes, the branch's earlier commits, a stale base), the way step 4 of `~/.agents/skills/fix/SKILL.md` says: read the failed log, re-run an infrastructure failure once, fix lint, type and drift failures on the failing files, fix the code under a failing test, add tests for the PR's uncovered lines. A test that pins old behaviour the PR means to change is the author's spec call: report it, never rewrite it to pass.
+- A failure that fails the same way on untouched `development` is not the branch's: show it once in the report and leave it (`Running checks` in `~/.agents/AGENTS.md`).
+- Every fix found in one pass goes out in one push, its own commit naming the check (`fix(tests): ...`), then wait again. Two failed attempts on the same check: stop on it and report what was tried. Never weaken a test, threshold or baseline to get green.
+
 ```
 #<pr> — <n> fixed · <n> declined · <n> left for you
 <n>. <fixed in <sha> | declined | open>: <one line>
@@ -98,6 +111,7 @@ decisions I made: <technical calls and why, one line each>
 not done: <anything skipped or blocked, and why>
 pushed: <branch> at <head> (<n> commits)
 replies: <the reply URLs>
+checks: <required: all pass | <name> red: <why, what was tried>>; not required: <Eval sample pass / red / still running, not waited on>
 next: /verify-fixes <pr> in a fresh conversation
 ```
 
