@@ -131,7 +131,8 @@ class McpServer(unittest.TestCase):
                               "params": {"protocolVersion": "2025-06-18", "clientInfo": {"name": "claude-code"}}})
         self.assertEqual(init["result"]["serverInfo"]["name"], "agents-hub")
         names = [t["name"] for t in server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]]
-        self.assertEqual(names, ["slack_me", "remind_me", "run_in_background", "hub_status", "hub_job"])
+        self.assertEqual(names, ["slack_me", "remind_me", "run_in_background", "oncall_notes", "oncall_note",
+                                 "hub_status", "hub_job"])
         with mock.patch.object(mcp_server, "hub_command", return_value="ok") as command:
             out = server.handle({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
                                  "params": {"name": "run_in_background", "arguments": {"task": "t", "allow_changes": True}}})

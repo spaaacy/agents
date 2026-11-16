@@ -113,6 +113,12 @@ Everything is under `~/.agents/state/hub/` (not in git):
 
 Nothing is deleted automatically.
 
+The on-call notebook lives beside it, in `~/.agents/state/on-call/`: `notes.jsonl` (append-only, kept forever) and `notebook.md` (the same, rendered: this shift first). See "The on-call notebook" below.
+
+## The on-call notebook
+
+One record of what each Datadog page turned out to be, shared by the hub and every Claude or Codex session on this Mac (`hub/core/oncall_notes.py`, stdlib only). Entries are shift marks, investigations and notes. The `on_call` watcher marks each shift with its real start from Datadog's on-call schedule; every page investigation reads the notebook first (this shift's entries about the paging monitors in full, then the rest of the shift, then earlier shifts' entries about the same monitors) and saves its report after. A local `/on-call` run does the same through the agents-hub tools `oncall_notes` and `oncall_note`; Slack answers read it with `python3 ~/.agents/hub/core/oncall_notes.py show`. By hand: `agents oncall`, `agents oncall search <words>`, `agents oncall note <text> [--monitor "ID name"]`, and the same as `!oncall ...` in Slack. Counts and ids only, never customer message text.
+
 ## Tests
 
 ```sh
@@ -136,12 +142,13 @@ cd ~/.agents && PYTHONPATH=. hub/.venv/bin/python -m unittest discover -s hub/te
 
 ## From your own Claude and Codex sessions: the agents-hub MCP server
 
-`hub/mcp_server.py` is an MCP server (stdio) registered for both CLIs from `mcp/servers.json` ("agents-hub"; `python3 mcp/render.py claude --apply` and `codex --apply`). It gives a session five tools, each a call to the running hub's local API:
+`hub/mcp_server.py` is an MCP server (stdio) registered for both CLIs from `mcp/servers.json` ("agents-hub"; `python3 mcp/render.py claude --apply` and `codex --apply`). It gives a session seven tools, each a call to the running hub's local API except the notebook's two, which read and write the file directly (so they work with the hub stopped):
 
 - `slack_me`: DM Aakif now from the bot.
 - `remind_me`: a reminder the `reminders` plugin posts when due (in 2h, at 3pm, tomorrow 9am, fri 10:30, 2026-11-14 09:00), with snooze buttons. Also `!remind`, `!reminders`, `!unremind` in Slack.
 - `run_in_background`: a task for the `background` plugin, run read-only in the folder the session is in (when that is a repo or worktree the hub knows), its answer in his DM, with buttons for any changes it proposes. `allow_changes` makes it ask for an OK in Slack first, then run in act mode. Also `!bg [--changes] <task>`.
 - `hub_status`, `hub_job`: what the hub is doing, one job's result.
+- `oncall_notes`, `oncall_note`: read the on-call notebook (this shift first; `monitors` adds earlier entries about them, `query` searches) and add to it.
 
 The hub's own runs never load it (their Codex homes list their servers, and PR reviews turn it off), so an agent can't queue work for itself.
 

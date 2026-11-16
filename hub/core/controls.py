@@ -17,6 +17,7 @@ In the bot's DM, a message from the owner that starts with the control prefix
   !remind <when> <what>   a reminder in this DM (when: in 2h, at 3pm, tomorrow 9am, fri 10am, 2026-11-14 09:00)
   !reminders              the pending ones; !unremind <id> drops one
   !bg <task>              run a task in the background, read-only; the answer lands here
+  !oncall [search <words> | note <text>]   the on-call notebook: this shift, then earlier pages
   !bg --changes <task>    a task that may change code or tickets: asks for your OK first
   !<plugin> <command> ... a plugin's own command
   !help

@@ -69,6 +69,8 @@
     "mcp__claude_ai_Linear__extract_images",
     "mcp__claude_ai_Linear__get_status_updates",
     "Bash(python3 ~/.agents/hub/core/sessions.py *)",
-    "Bash(python3 /Users/aakifmohamed/.agents/hub/core/sessions.py *)"
+    "Bash(python3 /Users/aakifmohamed/.agents/hub/core/sessions.py *)",
+    "Bash(python3 ~/.agents/hub/core/oncall_notes.py *)",
+    "Bash(python3 /Users/aakifmohamed/.agents/hub/core/oncall_notes.py *)"
   ]
 }

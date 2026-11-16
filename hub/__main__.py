@@ -7,6 +7,7 @@
   agents model [name] [--effort E]   list the models, or pick one (sol, astra, opus...; picks its engine too)
   agents effort [level|default]      the current model's effort (low, medium, high, xhigh, max; ultra on some Codex models)
   agents engine|model|effort reviews ...   the same, for PR reviews only (their own setting)
+  agents oncall [search <words> | note <text>]   the on-call notebook shared with your sessions (this shift first)
   agents jobs [plugin] | job <id> | retry <id> | cancel <id> | pause <plugin> | resume <plugin>
   agents open                  the dashboard in the browser
   agents watch [--once]        live view of jobs in this terminal
@@ -81,6 +82,10 @@ def main(argv: list[str] | None = None) -> int:
         return engine.model_main(rest)
     if cmd == "effort":
         return engine.effort_main(rest)
+    if cmd == "oncall":
+        from .core import oncall_notes
+
+        return oncall_notes.main(rest)
     cfg = load_config()
     if cmd == "serve":
         setup_logging(to_file=True)

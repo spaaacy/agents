@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from hub.core import agent
+from hub.core import agent, oncall_notes
 from hub.core.store import Store
 from hub.plugins.on_call import dd
 from hub.plugins.on_call import plugin as oc
@@ -67,6 +67,9 @@ class FakeDatadog:
     def on_call_users(self, team_id: str) -> list[dict[str, Any]]:
         return [{"type": "users", "id": "me" if self.on_call else "someone-else"}]
 
+    def shift_start(self, team_id: str, user_id: str) -> datetime | None:
+        return datetime(2026, 11, 10, 17, 0, tzinfo=UTC) if self.on_call else None
+
     def alert_events(self, since: float, until: float) -> list[dict[str, Any]]:
         self.event_reads.append((since, until))
         return self.events
@@ -120,6 +123,7 @@ class Base(unittest.TestCase):
             mock.patch.object(oc, "OLD_STATE_FILE", self.root / "old-state.json"),
             mock.patch.object(oc, "notify", lambda *args: None),
             mock.patch.object(oc.agent.engine, "engine", lambda *args: self.engine_name),
+            mock.patch.dict("os.environ", {"ONCALL_NOTES_DIR": str(self.root / "notes")}),  # never the real notebook
         ]
         for patch in patches:
             patch.start()
@@ -190,6 +194,19 @@ class Poll(Base):
         self.assertEqual(self.plugin.state.checkpoint, 50_000.0)
         self.assertEqual(datadog.event_reads, [(50_000.0 - 300, 50_000.0)])
         self.assertEqual(self.plugin.get("state")["checkpoint"], 50_000.0)  # kept across restarts
+
+    def test_the_watcher_marks_shifts_in_the_notebook_once(self) -> None:
+        self.plugin.datadog = datadog = FakeDatadog(events=[])
+        self.plugin.poll(now=50_000.0)
+        self.plugin.on_call_checked = 0  # force a fresh on-call read
+        self.plugin.poll(now=50_400.0)
+        self.assertEqual([e["kind"] for e in oncall_notes.entries()], ["shift_start"])
+        self.assertEqual(oncall_notes.shift(oncall_notes.entries())[0], datetime(2026, 11, 10, 17, 0, tzinfo=UTC),
+                         "the schedule's start, not when the watcher noticed")
+        datadog.on_call = False
+        self.plugin.on_call_checked = 0
+        self.plugin.poll(now=50_800.0)
+        self.assertEqual([e["kind"] for e in oncall_notes.entries()], ["shift_start", "shift_end"])
 
     def test_off_shift_reads_no_events_and_moves_the_checkpoint(self) -> None:
         self.plugin.datadog = datadog = FakeDatadog(on_call=False, events=[event("a", "2026-11-10T17:47:07Z")])
@@ -326,6 +343,30 @@ class Handle(Base):
         self.assertEqual(task.claude_settings, oc.SETTINGS_FILE)
         self.assertIn(f"Bash(python3 {oc.HERE / 'dd.py'} *)", task.claude_allowed_tools)
         self.assertIn("chained command", task.prompt)
+
+    def test_reads_the_notebook_first_and_saves_its_report_after(self) -> None:
+        oncall_notes.add("note", "outbox page last week was a throttled demo mailbox", source="laptop", monitors=["5 Outbox"])
+        result = self.plugin.investigate([page("a", 5)], self.run_agent("false alarm: demo mailbox again"))
+        self.assertEqual(result.status, "done")
+        prompt = self.tasks[0].prompt
+        self.assertIn("on-call notebook", prompt)
+        self.assertIn("throttled demo mailbox", prompt, "earlier entries about the same monitor reach the agent")
+        saved = [e for e in oncall_notes.entries() if e["kind"] == "investigation"]
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0]["text"], "false alarm: demo mailbox again")
+        self.assertEqual(saved[0]["link"], "https://slack/D1/ts2")
+        self.assertEqual(saved[0]["session"], "claude:s1")
+        self.assertTrue(saved[0]["monitors"][0].startswith("5 "))
+
+    def test_a_failed_run_saves_nothing(self) -> None:
+        self.plugin.investigate([page("a", 5)], self.run_agent(error="boom"))
+        self.assertEqual(oncall_notes.entries(), [])
+
+    def test_oncall_command_shows_and_adds(self) -> None:
+        command = self.plugin.aliases()["oncall"]
+        self.assertIn("saved to the on-call notebook", command(["note", "restarted", "the", "worker", "--monitor", "5 Outbox"]))
+        self.assertIn("restarted the worker", command(["search", "worker"]))
+        self.assertIn("No shift recorded yet", command([]))
 
     def test_codex_gets_its_limits_and_its_resume_command(self) -> None:
         self.engine_name = "codex"

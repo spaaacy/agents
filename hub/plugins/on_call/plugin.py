@@ -12,7 +12,10 @@ thread instead of a new job (posted by the source, no agent).
 A job posts a short "paged" headline in the owner's DM, runs the on-call skill
 unattended on the engine the switch names (read-only; see hub/core/agent.py),
 and posts the report in the headline's thread with the command that resumes
-the session on the laptop. Datadog keys reach the agent's commands through the
+the session on the laptop. The on-call notebook (hub/core/oncall_notes.py) is
+shared with Aakif's own sessions: the watcher marks his shifts in it, every
+investigation reads it first (in its prompt) and adds its findings after, and
+`!oncall` shows, searches or adds to it. Datadog keys reach the agent's commands through the
 environment, never the prompt; dd.py in this folder is the agent's read-only
 Datadog client.
 """
@@ -34,7 +37,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from ...core import agent
+from ...core import agent, oncall_notes
 from ...core.plugin import Check, JobContext, Plugin
 from ...core.store import Job, JobResult
 from ...core.voice import turn_reminder
@@ -167,7 +170,7 @@ def _urlopen(request: urllib.request.Request) -> Any:
 
 
 class Datadog:
-    """The three Datadog reads the source needs, all read-only."""
+    """The Datadog reads the source needs, all read-only."""
 
     def __init__(self, api_key: str, app_key: str, opener: Opener = _urlopen) -> None:
         self.headers = {"DD-API-KEY": api_key, "DD-APPLICATION-KEY": app_key, "Content-Type": "application/json"}
@@ -190,6 +193,19 @@ class Datadog:
         """The people on call for the team right now (the first escalation step)."""
         result = self._request("GET", f"on-call/teams/{team_id}/on-call?include=responders")
         return [item for item in result.get("included") or [] if item.get("type") == "users"]
+
+    def shift_start(self, team_id: str, user_id: str) -> datetime | None:
+        """When the user's current shift on one of the team's schedules began; None when it can't be read."""
+        for schedule in self._request("GET", "on-call/schedules").get("data") or []:
+            teams = ((schedule.get("relationships") or {}).get("teams") or {}).get("data") or []
+            if team_id not in {t.get("id") for t in teams}:
+                continue
+            shift = self._request("GET", f"on-call/schedules/{schedule['id']}/on-call?include=user")
+            people = {item.get("id") for item in shift.get("included") or []}
+            start = ((shift.get("data") or {}).get("attributes") or {}).get("start")
+            if user_id in people and start:
+                return datetime.fromisoformat(str(start))
+        return None
 
     def alert_events(self, since: float, until: float) -> list[dict[str, Any]]:
         """Every monitor alert event between two epoch seconds, oldest first."""
@@ -330,7 +346,18 @@ def skill_text(path: Path = SKILL_FILE) -> str:
     return text.strip()
 
 
-def build_prompt(pages: Sequence[Page], skill: str, engine_name: str = "claude") -> str:
+NOTEBOOK = """
+
+Already in Aakif's on-call notebook (shared with his own sessions): the current \
+shift, then earlier entries about these monitors. Build on it: don't redo work it \
+already shows, say when a page matches an earlier one and what it was then, and \
+say so when the evidence now contradicts it. The hub saves your report to the \
+notebook when you finish; don't write to it yourself.
+
+{notes}"""
+
+
+def build_prompt(pages: Sequence[Page], skill: str, engine_name: str = "claude", notes: str = "") -> str:
     monitors = " ".join(sorted({str(page.monitor_id) for page in pages}))
     prompt = UNATTENDED.format(
         pages="\n".join(page.line() for page in pages),
@@ -338,6 +365,8 @@ def build_prompt(pages: Sequence[Page], skill: str, engine_name: str = "claude")
         dd=DD_SCRIPT,
         limits=SHELL_LIMITS.get(engine_name, SHELL_LIMITS["claude"]),
     )
+    if notes:
+        prompt += NOTEBOOK.format(notes=notes)
     reminder = turn_reminder()
     return prompt + "\n" + reminder if reminder else prompt
 
@@ -509,6 +538,11 @@ class OnCall(Plugin):
                 raise RuntimeError(f"no Datadog team with handle {self.config['datadog_team_handle']!r}")
         self.on_call = owner_on_call(datadog.on_call_users(self.team), self.config["owner_datadog_user_id"])
         self.on_call_checked = now
+        try:
+            start = datadog.shift_start(self.team, self.config["owner_datadog_user_id"]) if self.on_call else None
+            oncall_notes.mark_shift(self.on_call, start=start)  # only writes when the notebook says otherwise
+        except Exception:  # noqa: BLE001 - the notebook never stops paging
+            self.log.warning("could not mark the shift in the on-call notebook", exc_info=True)
         return self.on_call
 
     def poll(self, now: float | None = None) -> None:
@@ -640,8 +674,14 @@ class OnCall(Plugin):
         cfg = self.agent_cfg()
         engine_name = agent.engine.engine()
         keys = self.keys()
+        labels = sorted({f"{page.monitor_id} {page.name}" for page in pages})
+        try:
+            notes = oncall_notes.digest(monitors=labels)
+        except Exception:  # noqa: BLE001 - investigate without it
+            self.log.warning("could not read the on-call notebook", exc_info=True)
+            notes = ""
         task = agent.AgentTask(
-            prompt=build_prompt(pages, skill_text(), engine_name),
+            prompt=build_prompt(pages, skill_text(), engine_name, notes),
             cwd=Path(cfg.get("workdir", "~/dev/envoyai-backend")).expanduser(),
             system=SYSTEM_PROMPT,
             mcp_servers=list(cfg.get("mcp_servers", [])) + ["linear"],
@@ -664,6 +704,12 @@ class OnCall(Plugin):
                 post_error = f"could not post the report to Slack: {type(exc).__name__}: {exc}"
         if thread and not result.error and post_error is None:
             self.offer_followups(thread, result, task.env)
+        if not result.error and result.text.strip():
+            try:
+                oncall_notes.add("investigation", result.text, source="Aakif's Dot (page investigation)",
+                                 monitors=labels, link=report_link or thread_link, session=result.session)
+            except Exception:  # noqa: BLE001
+                self.log.warning("could not save the report to the on-call notebook", exc_info=True)
         first_line = next((line.strip() for line in body.splitlines() if line.strip()), "")
         delivered = not post or thread is not None and post_error is None
         return JobResult(
@@ -702,6 +748,10 @@ class OnCall(Plugin):
             return None
 
     # ------------------------------------------------------------------ dashboard, checks, terminal
+
+    def aliases(self) -> dict[str, Callable[[list[str]], str]]:
+        # `!oncall` (this shift), `!oncall search <words>`, `!oncall note <text> [--monitor "ID name"]`
+        return {"oncall": lambda args: oncall_notes.command(args, source="Aakif (Slack or dashboard)")}
 
     def status(self) -> dict[str, Any]:
         return {

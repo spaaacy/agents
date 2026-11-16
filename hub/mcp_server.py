@@ -1,7 +1,8 @@
 """agents-hub: an MCP server (stdio) that lets Aakif's own Claude and Codex sessions talk to his agents hub.
 
 Tools: message him on Slack now, set a reminder, hand the hub a background task (its answer lands in his
-Slack DM), and check on the hub or a job. Each call goes to the running hub through its local API
+Slack DM), check on the hub or a job, and read or add to his on-call notebook (hub/core/oncall_notes.py, read
+and written directly, so it works with the hub stopped). Each call goes to the running hub through its local API
 (127.0.0.1, the dashboard token); with the hub stopped, the tools say so.
 
 Registered for both CLIs from ~/.agents/mcp/servers.json ("agents-hub"); run by hand with
@@ -15,6 +16,8 @@ import sys
 import urllib.request
 from pathlib import Path
 from typing import Any
+
+from hub.core import oncall_notes
 
 STATE_DIR = Path.home() / ".agents" / "state" / "hub"
 CONFIG = Path(__file__).resolve().parent / "config.json"
@@ -48,6 +51,29 @@ TOOLS = [
             "task": {"type": "string", "description": "the full task, with every detail it needs"},
             "allow_changes": {"type": "boolean", "description": "may edit code or tickets after his OK", "default": False}},
             "required": ["task"]},
+    },
+    {
+        "name": "oncall_notes",
+        "description": "Aakif's on-call notebook, shared with his agents hub (Aakif's Dot): what each Datadog page "
+                       "turned out to be, what was ruled out and what was done, this shift first. Read it before "
+                       "investigating a page or answering about an alert or incident. With monitors: also earlier "
+                       "entries about those monitors. With query: every entry holding all the words.",
+        "inputSchema": {"type": "object", "properties": {
+            "monitors": {"type": "array", "items": {"type": "string"}, "description": "Datadog monitor ids"},
+            "query": {"type": "string", "description": "words to search every entry for"}}},
+    },
+    {
+        "name": "oncall_note",
+        "description": "Add to Aakif's on-call notebook. Save an on-call investigation's findings when it finishes "
+                       "(what fired, what it was, evidence, what was ruled out, what was done or is next), and "
+                       "anything he asks to remember for the shift. Counts and ids only, never customer message text.",
+        "inputSchema": {"type": "object", "properties": {
+            "text": {"type": "string", "description": "the findings, standalone (whoever reads it can't see this session)"},
+            "monitors": {"type": "array", "items": {"type": "string"},
+                         "description": "the monitors it is about, each \"<id> <name>\""},
+            "investigation": {"type": "boolean", "default": False,
+                              "description": "true when this is an investigation's findings, false for a note"}},
+            "required": ["text"]},
     },
     {
         "name": "hub_status",
@@ -95,6 +121,15 @@ class Server:
             if args.get("allow_changes"):
                 words.append("--changes")
             return hub_command(words + [str(args.get("task", ""))])
+        if name == "oncall_notes":
+            query = str(args.get("query") or "").strip()
+            if query:
+                return oncall_notes.command(["search", *query.split()], source=self.source())
+            return oncall_notes.digest(monitors=[str(m) for m in args.get("monitors") or []])
+        if name == "oncall_note":
+            entry = oncall_notes.add("investigation" if args.get("investigation") else "note", str(args.get("text", "")),
+                                     source=self.source(), monitors=[str(m) for m in args.get("monitors") or []])
+            return f"saved to the on-call notebook ({entry['id']}); the hub's next investigation reads it"
         if name == "hub_status":
             return hub_command(["status"])
         if name == "hub_job":
@@ -112,7 +147,8 @@ class Server:
             return {"jsonrpc": "2.0", "id": mid, "result": {
                 "protocolVersion": version, "capabilities": {"tools": {}},
                 "serverInfo": {"name": "agents-hub", "version": "1.0"},
-                "instructions": "Aakif's agents hub on this Mac: Slack him, set reminders, run tasks in the background."}}
+                "instructions": "Aakif's agents hub on this Mac: Slack him, set reminders, run tasks in the background, "
+                                "and read or add to his on-call notebook."}}
         if method == "ping":
             return {"jsonrpc": "2.0", "id": mid, "result": {}}
         if method == "tools/list":
@@ -121,10 +157,13 @@ class Server:
             params = message.get("params") or {}
             try:
                 text = self.call(params.get("name", ""), params.get("arguments") or {})
-                return {"jsonrpc": "2.0", "id": mid, "result": {"content": [{"type": "text", "text": text}],
-                                                                 "isError": text.startswith("the agents hub isn't reachable")}}
             except KeyError:
                 return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32602, "message": f"unknown tool {params.get('name')}"}}
+            except ValueError as exc:  # e.g. an empty note
+                return {"jsonrpc": "2.0", "id": mid, "result": {"content": [{"type": "text", "text": str(exc)}],
+                                                                 "isError": True}}
+            return {"jsonrpc": "2.0", "id": mid, "result": {"content": [{"type": "text", "text": text}],
+                                                             "isError": text.startswith("the agents hub isn't reachable")}}
         return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": f"unknown method {method}"}}
 
     def serve(self) -> None:
