@@ -193,8 +193,9 @@ def claude_command(task: AgentTask, session_id: str | None, mcp_path: Path | Non
     if task.schema is not None:
         cmd += ["--json-schema", json.dumps(task.schema)]
     cmd += engine.claude_model_args(task.choice)
-    # Takes every following argument, so it stays last.
-    return cmd + ["--allowedTools", *task.claude_allowed_tools]
+    # Takes every following argument, so it stays last; with no tools allowed it is left off (an empty
+    # --allowedTools is a usage error, and dontAsk already refuses every tool not allowed).
+    return cmd + (["--allowedTools", *task.claude_allowed_tools] if task.claude_allowed_tools else [])
 
 
 def run_claude(task: AgentTask, cancel: threading.Event | None = None, execute: Execute = stream) -> AgentResult:

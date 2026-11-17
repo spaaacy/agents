@@ -81,6 +81,8 @@
     "WebFetch(domain:status.cloud.microsoft)",
     "WebFetch(domain:azure.status.microsoft)",
     "WebFetch(domain:www.google.com)",
-    "WebFetch(domain:status.cloudamqp.com)"
+    "WebFetch(domain:status.cloudamqp.com)",
+    "Bash(python3 ~/.agents/hub/core/oncall_notes.py *)",
+    "Bash(python3 /Users/aakifmohamed/.agents/hub/core/oncall_notes.py *)"
   ]
 }

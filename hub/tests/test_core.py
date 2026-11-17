@@ -174,6 +174,10 @@ class Agent_(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("-C") + 1], "/checkout")
         self.assertIn("gpt-6.1-sol", cmd)
 
+    def test_a_claude_run_with_no_tools_sends_no_tool_list(self):
+        cmd = agent.claude_command(agent.AgentTask("summarise", Path("/tmp")), None, None)
+        self.assertNotIn("--allowedTools", cmd)
+
     def test_review_mode_runs_on_the_pinned_choice(self):
         choice = {"engine": "codex", "codex": {"model": "gpt-6-astra", "effort": "xhigh"},
                   "claude": {"model": "opus", "effort": "high"}}

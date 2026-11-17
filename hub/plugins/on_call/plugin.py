@@ -346,6 +346,8 @@ def skill_text(path: Path = SKILL_FILE) -> str:
     return text.strip()
 
 
+MEMORY_RETRY_SECONDS = 600
+
 NOTEBOOK = """
 
 Aakif's on-call memory (shared with his own sessions): what each monitor usually \
@@ -641,6 +643,7 @@ class OnCall(Plugin):
     # ------------------------------------------------------------------ a job
 
     def queue_memory_update(self) -> Job | None:
+        # One job per batch per 10 minutes: a failed rewrite is tried again in the next window.
         """Fold notebook entries the memory doesn't take in yet into it, one batch per job (low priority)."""
         try:
             pending = oncall_notes.unconsolidated()
@@ -651,7 +654,8 @@ class OnCall(Plugin):
             return None
         batch = pending[: oncall_notes.MEMORY_BATCH]
         return self.enqueue(f"update the on-call memory ({len(batch)} new entr{'y' if len(batch) == 1 else 'ies'})",
-                            {"memory": True}, dedupe=f"memory:{batch[-1]['id']}", priority=10)
+                            {"memory": True}, dedupe=f"memory:{batch[-1]['id']}:{int(time.time() // MEMORY_RETRY_SECONDS)}",
+                            priority=10)
 
     def update_memory(self, ctx: JobContext) -> JobResult:
         """Rewrite memory.md with the agent from the next batch of entries."""
