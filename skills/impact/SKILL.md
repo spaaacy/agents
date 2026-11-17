@@ -53,17 +53,12 @@ Whenever the PR, or a sibling PR for the same ticket, changes something a person
 
 Pick the screens from the diff and the ticket: every page, panel, dialog, setting, card or state the change adds or alters (a new toggle, the empty state, the error, the state after a click), each captured in the state that shows the change. One screenshot per change, scoped to the part that changed (the panel or dialog, not the whole window) unless the layout itself is the change. When the screen existed before, capture it at the PR's base too, so the page shows before and after side by side.
 
-How each kind is captured:
+Capture each one the way the Capture section of `~/.agents/skills/screenshots/SKILL.md` says (web, chat-ui and extension; throwaway checkouts of the PR's head and base, never a mockup), saving the PNGs to the scratchpad. When the ticket already has a `Screenshots: <repo>#<pr> at <sha>` comment from that skill for the PR's current head, its images can be used instead of capturing again (download each with `curl -L` and embed it). Two kinds that skill does not cover:
 
-- Web (`envoyai-web`): its Playwright setup runs the real app with no backend (`e2e/README.md`: mock tier, `mockLoggedIn` in `e2e/support/mock-api.ts`, `test` from `e2e/support/fixtures.ts`, `appPath()` for the `/app` base path).
-  1. Make a throwaway checkout of the PR's head: `git -C ~/dev/envoyai-web fetch origin <head> && git -C ~/dev/envoyai-web worktree add --detach ~/dev/.claude/worktrees/impact-web-<pr> <head sha>`, then `cp -Rc ~/dev/envoyai-web/node_modules` into it (a copy-on-write clone, never a symlink: vite refuses files reached through a link). When the change lives in chat-ui, build the chat-ui PR's head and link it in the way `CHAT_UI.md` says.
-  2. Write one throwaway spec there, `e2e/zz-impact-capture.spec.ts` (never committed): sign in a mock admin, stub every `/api/*` call the page makes with example data shaped like the real responses (reuse the mocks in the PR's own e2e specs when it has them; the generated API types say the shapes), drive the page into the changed state, and save `locator.screenshot()` PNGs at a 1280×800 viewport to the scratchpad.
-  3. Run it: `npx playwright test e2e/zz-impact-capture.spec.ts --reporter=line` from that checkout (it boots its own dev server on port 5174; one run at a time). Fix the spec until every screenshot shows the intended state; a blank or error page is a broken spec, not a screenshot.
-  4. For "before", run the same spec in a throwaway checkout of the PR's base sha.
-- Extension (`envoyai-chrome-plugin`): it has no browser harness. Show its changes through the web page that renders the same chat-ui component when there is one, else use the screenshots in the PR body or comments (download each with `curl -L -H "Authorization: token $(gh auth token)" <url>`, since the page cannot load GitHub's images), else list it under "Not shown".
+- Extension screens with no web counterpart: use the screenshots in the PR body or comments (download each with `curl -L -H "Authorization: token $(gh auth token)" <url>`, since the page cannot load GitHub's images), else list it under "Not shown".
 - Emails and messages the backend sends (an award email, a carrier-facing text): render them with the PR's own code and example data (the function the code calls, fed the way its tests feed it, run in a throwaway backend checkout with `poetry run python`), then screenshot the HTML with Playwright (`page.setContent(html)`). A plain-text message is quoted on the page as text, exactly.
 
-Label every screenshot with where it is ("Load Details › Offers, a held offer") and mark it "example data". Remove every throwaway checkout when done (`git worktree remove --force <path>`: they hold nothing but the throwaway spec).
+Label every screenshot with where it is ("Load Details › Offers, a held offer") and mark it "example data".
 
 ## The database (when the PR has a migration)
 

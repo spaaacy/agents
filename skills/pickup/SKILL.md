@@ -10,7 +10,7 @@ Two steps, always in order, each ending with a stop:
 1. **Context** (the default): read everything, lay out how it would work, change nothing — no branch, no worktree, no edits, no Linear writes, no PR.
 2. **Work**: runs only when the user says so after step 1 ("go", "start", or this skill again with keys). If step 1 has not run in this conversation, run it first and stop there.
 
-Flow: this is the first skill in the PR lifecycle. It ends with a draft PR; the author then runs `/review <pr>` on it, `/fix <pr>` keeps it level with `development` and its required checks green while reviewers read it, and fixes any red in its `Eval sample` the PR itself caused, their comments are worked with `/address-review <pr>` and checked with `/verify-fixes <pr>`, the user merges, and `/linear-sweep` moves the ticket once it ships. The worktree this skill creates is the one every later skill reuses, and `/cleanup` removes it once the PR has shipped.
+Flow: this is the first skill in the PR lifecycle. It ends with a draft PR (a frontend one with its screenshots, through `/screenshots`); the author then runs `/review <pr>` on it, `/fix <pr>` keeps it level with `development` and its required checks green while reviewers read it, and fixes any red in its `Eval sample` the PR itself caused, their comments are worked with `/address-review <pr>` and checked with `/verify-fixes <pr>`, the user merges, and `/linear-sweep` moves the ticket once it ships. The worktree this skill creates is the one every later skill reuses, and `/cleanup` removes it once the PR has shipped.
 To put the main checkouts on this ticket's stack and remove the approved worktrees, use `/spotlight <ticket>`.
 
 # Step 1: context
@@ -114,6 +114,8 @@ The smallest change that delivers the ticket as laid out in step 1. If the code 
 
 Push the branch with `git -C <worktree> push -u origin <branch>`, so the branch follows its own remote branch (what `/fix` pulls and `/spotlight` checks), and open a **draft** PR against the repo's default branch, titled by the repo's convention with the ticket key, which is what links it to the Linear ticket (the ticket itself is never edited: no state, assignee, title or description change without the user's approval; a comment is fine). The body says: what changed and why, the observable behaviour ledger, what was tested and eval'd, and the cross-repo deploy order when more than one repo is involved. A PR that adds a backfill gets its runbook ticket drafted and asked about in this round (`Working style` in `~/.agents/AGENTS.md`), and the body links it once it exists. Plain professional English, whatever the chat voice is, plus the session's attribution lines.
 
+A draft PR in `envoyai-web`, `envoyai-chrome-plugin` or `envoyai-chat-ui` then gets its screenshots, with no go to wait for: follow `~/.agents/skills/screenshots/SKILL.md` for it (real before/after screens posted on the ticket, the body's Screenshots section pointing there).
+
 Never mark it ready for review, never approve, never merge, never enable auto-merge, and never move the Linear ticket's state — those are the user's, always, and a finished PR is not an instruction to merge it.
 
 ## Report, then stop
@@ -122,6 +124,7 @@ Never mark it ready for review, never approve, never merge, never enable auto-me
 <KEY> — draft PR #<n> <url>
 did: <what changed, one line per area>
 tests: <what ran, red-first or not, and the result>
+screenshots: <n posted on the ticket | no visible change | not a frontend PR>
 decisions I made: <technical calls and why, one line each>
 not done: <skipped, blocked, or deliberately out of scope, and why>
 next: <the next ticket — say go> | /review <pr> before you read it, then /loop /fix <pr>

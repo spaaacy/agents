@@ -93,6 +93,8 @@ Write a short reply for every finding, in plain professional English whatever th
 
 Push the branch from the worktree first (`git push origin <headRefName>`, never force, never a different branch), so every commit a reply names is on GitHub, then post each reply to its own thread (`gh api repos/<owner>/<repo>/pulls/<number>/comments/<databaseId>/replies -f body=...` for inline threads, `gh pr comment` otherwise). No go is needed for either. Hold both, and ask with the structured question tool instead, only when pushing would put broken work in front of reviewers: a touched test is still red, a fix was left half-done, or the branch moved on the remote since step 1.
 
+A frontend PR (`envoyai-web`, `envoyai-chrome-plugin`, `envoyai-chat-ui`) whose round changed something on screen gets its screenshots refreshed after the push, following `~/.agents/skills/screenshots/SKILL.md` (it updates the ticket's comment and the body's Screenshots section in place). A round that only touched tests, types or logic nobody sees leaves them alone.
+
 ### Clear the required checks
 
 The round is not done until every required check passes on the pushed head. Required means `gh pr checks <pr> --required`, read live; a check that is not on it (the backend's `Eval sample` above all) never holds the round: it is not waited on and not fixed here, that is `/fix`'s, and the report only names it when it is red.
@@ -110,6 +112,7 @@ tests: <what ran and the result>
 decisions I made: <technical calls and why, one line each>
 not done: <anything skipped or blocked, and why>
 pushed: <branch> at <head> (<n> commits)
+screenshots: <refreshed on the ticket | unchanged | not a frontend PR>
 replies: <the reply URLs>
 checks: <required: all pass | <name> red: <why, what was tried>>; not required: <Eval sample pass / red / still running, not waited on>
 next: /verify-fixes <pr> in a fresh conversation
