@@ -463,7 +463,7 @@ def codex_env(home: Path, extra: dict[str, str] | None = None) -> dict[str, str]
 
 
 def codex_command(cwd: Path, output: Path, *, session: str | None = None,
-                  schema: Path | None = None) -> list[str]:
+                  schema: Path | None = None, images: list[str] | None = None) -> list[str]:
     """One unattended ``codex exec`` turn (a new session, or ``session`` resumed); the prompt goes on stdin.
 
     Model, effort, sandbox and approvals come from the home's config.toml, so a
@@ -472,6 +472,9 @@ def codex_command(cwd: Path, output: Path, *, session: str | None = None,
     cmd = [CODEX, "exec"]
     if session:
         cmd += ["resume"]
+    for image in images or []:
+        # Before the other flags: `-i` takes several values and would swallow a positional after it.
+        cmd += ["-i", image]
     cmd += ["--json", "--skip-git-repo-check", "-o", str(output)]
     if not session:
         # `exec resume` takes neither: a resumed session keeps its first turn's folder.

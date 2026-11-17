@@ -52,6 +52,8 @@ class AgentTask:
     # Pin a model and effort (an engine.current() choice, e.g. the "reviews" setting). Honored by Claude runs and
     # Codex review mode, which pass them on the command line; other Codex modes read the shared home's config.
     choice: dict[str, Any] | None = None
+    # Image files the agent should look at: Codex gets them attached (-i); Claude opens the paths the prompt names.
+    images: list[str] = field(default_factory=list)
     write_dirs: list[str] = field(default_factory=list)  # act mode: more folders it may write in
     repos: list[str] = field(default_factory=list)        # act mode: checkouts whose git data it may write
 
@@ -288,11 +290,11 @@ def run_codex(task: AgentTask, cancel: threading.Event | None = None, execute: E
     elif task.mode == "act":
         writable = engine.default_write_dirs(task.repos) + [run_dir] + [Path(d).expanduser() for d in task.write_dirs]
         home = engine.prepare_codex_home(task.mcp_servers, act=True, write_dirs=writable)
-        cmd = engine.codex_command(task.cwd, output, session=session_id, schema=schema_path)
+        cmd = engine.codex_command(task.cwd, output, session=session_id, schema=schema_path, images=task.images)
         env = engine.codex_env(home, {**engine.act_git_env(), **task.env})
     else:
         home = engine.prepare_codex_home(task.mcp_servers)
-        cmd = engine.codex_command(task.cwd, output, session=session_id, schema=schema_path)
+        cmd = engine.codex_command(task.cwd, output, session=session_id, schema=schema_path, images=task.images)
         env = engine.codex_env(home, task.env)
     seen = engine.CodexEvents()
     events = (run_dir / "events.jsonl").open("a")

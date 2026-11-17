@@ -43,7 +43,8 @@
                 "im:history",
                 "mpim:history",
                 "chat:write",
-                "reactions:write"
+                "reactions:write",
+                "files:read"
             ],
             "bot": [
                 "app_mentions:read",
@@ -55,7 +56,8 @@
                 "mpim:history",
                 "users:read",
                 "im:write",
-                "assistant:write"
+                "assistant:write",
+                "files:read"
             ]
         },
         "pkce_enabled": false

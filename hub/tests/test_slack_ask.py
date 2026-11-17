@@ -252,6 +252,63 @@ class Prompt(unittest.TestCase):
         self.assertIn("@envoy-agent", codex)
 
 
+
+class Screenshots(unittest.TestCase):
+    names = staticmethod(lambda uid: {"U1": "Maddie"}.get(uid, uid))
+
+    def conversation(self):
+        return [
+            {"ts": "100.0", "user": "U1", "text": "he can't sign in",
+             "files": [{"id": "F1", "name": "image.png", "mimetype": "image/png", "size": 36000,
+                        "url_private_download": "https://files.slack.com/F1"}]},
+            {"ts": "101.0", "user": "U1", "text": "here's the log",
+             "files": [{"id": "F2", "name": "log.txt", "mimetype": "text/plain", "size": 900}]},
+        ]
+
+    def test_only_images_are_picked_and_the_prompt_says_where_each_is(self):
+        convo = self.conversation()
+        self.assertEqual([f["id"] for f in sa.image_files(convo)], ["F1"])
+        m = sa.Mention("C1", "105.0", "100.0", f"<@{BOT}>")
+        prompt = sa.build_prompt(m, convo, BOT, self.names, resumed=False, reminder="",
+                                 images={"F1": Path("/tmp/x/F1.png")})
+        self.assertIn("[screenshot attached: image.png; open it: /tmp/x/F1.png]", prompt)
+        self.assertIn("[file attached: log.txt (text/plain), not opened]", prompt)
+        missing = sa.build_prompt(m, convo, BOT, self.names, resumed=False, reminder="", images={"F1": None})
+        self.assertIn("could not be downloaded", missing)
+
+    def test_download_keeps_images_and_refuses_a_sign_in_page(self):
+        class Response:
+            def __init__(self, kind, body):
+                self.headers, self.body = {"Content-Type": kind}, body
+            def read(self, n=-1):
+                return self.body
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+
+        files = sa.image_files(self.conversation())
+        with tempfile.TemporaryDirectory() as tmp:
+            got = sa.download_images("xoxp-1", files, Path(tmp), opener=lambda req, timeout: Response("image/png", b"PNG"))
+            self.assertEqual(got["F1"].read_bytes(), b"PNG")
+            html = sa.download_images("xoxp-1", files, Path(tmp) / "b",
+                                      opener=lambda req, timeout: Response("text/html", b"<html>"))
+            self.assertIsNone(html["F1"], "no files:read scope: Slack answers with a page, not the image")
+            self.assertIsNone(sa.download_images(None, files, Path(tmp))["F1"])
+
+    def test_codex_gets_each_image_before_its_other_flags(self):
+        cmd = agent.engine.codex_command(Path("/w"), Path("/o"), images=["/i/a.png", "/i/b.png"])
+        self.assertEqual(cmd[2:6], ["-i", "/i/a.png", "-i", "/i/b.png"])
+        self.assertEqual(cmd[-1], "-")
+        resumed = agent.engine.codex_command(Path("/w"), Path("/o"), session="s1", images=["/i/a.png"])
+        self.assertEqual(resumed[2:5], ["resume", "-i", "/i/a.png"])
+        self.assertEqual(resumed[-2:], ["s1", "-"])
+
+    def test_the_prompt_tells_it_to_look_before_blaming_the_browser(self):
+        rules = system_prompt("claude", "Aakif's Dot")
+        self.assertIn("Open every screenshot", rules)
+        self.assertIn("only when the evidence shows that", rules)
+
 class Sessions(unittest.TestCase):
     def test_migration_tags_old_sessions_once(self):
         with tempfile.TemporaryDirectory() as root:
