@@ -2,6 +2,7 @@ import json
 import socket
 import tempfile
 import unittest
+from unittest import mock
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -109,6 +110,30 @@ class Dashboard(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("engine_text", state)
         self.assertEqual(state["jobs"], [])
+
+    def test_tab_icon_and_the_on_call_notebook(self):
+        status, body = self.request("/favicon.png")
+        self.assertEqual((status, body[:4]), (200, b"\x89PNG"))
+        status, body = self.request("/")
+        self.assertIn(b'rel="icon"', body)
+        self.assertIn(b"On-call notebook", body)
+        with mock.patch.dict("os.environ", {"ONCALL_NOTES_DIR": str(Path(self.tmp.name) / "notes")}):
+            from hub.core import oncall_notes
+            oncall_notes.add("shift_start", source="hub")
+            oncall_notes.add("note", "restarted the worker", source="laptop", monitors=["5 Outbox"])
+            oncall_notes.add("note", "nothing else", source="laptop")
+            status, body = self.request("/api/oncall")
+            data = json.loads(body)
+            self.assertEqual(status, 200)
+            self.assertTrue(data["shift"]["on"])
+            self.assertEqual(data["count"], 2)
+            self.assertEqual([e["kind"] for e in data["entries"]], ["note", "note", "shift_start"])
+            self.assertIn("PT", data["entries"][0]["when"])
+            status, body = self.request("/api/oncall?q=worker")
+            self.assertEqual([e["text"] for e in json.loads(body)["entries"]], ["restarted the worker"])
+            # The note box sends `oncall note <text>`, which the on_call plugin answers (not loaded in this hub).
+            status, body = self.post(["oncall", "note", "posted from the dashboard"], headers={"X-Hub-Token": self.token})
+            self.assertEqual(status, 200)
 
     def test_posts_need_the_token_and_our_origin(self):
         self.assertEqual(self.post(["engine"])[0], 403)

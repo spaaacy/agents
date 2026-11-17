@@ -187,7 +187,7 @@ class Agent_(unittest.TestCase):
 
     def test_review_commands_switch_only_the_reviews_setting(self):
         hub = Hub({"owner": {"slack_user_id": "U1"}, "plugins": {}}, state_dir=Path(self.dir.name) / "hub", with_slack=False)
-        self.assertIn("PR reviews now run on codex (gpt-6.1-sol", hub.command(["model", "reviews", "sol"]))
+        self.assertIn("PR reviews now run on codex (gpt-6.1-sol", hub.command(["model", "reviews", "gpt-6.1-sol"]))
         self.assertIn("PR reviews now run on claude", hub.command(["engine", "reviews", "claude"]))
         self.assertEqual((engine.engine(scope="reviews"), engine.engine()), ("claude", "codex"))
         self.assertIn("PR reviews run on claude", hub.command(["status"]))

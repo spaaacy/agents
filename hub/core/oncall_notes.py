@@ -195,6 +195,20 @@ def digest(monitors: Iterable[str] = (), limit: int = 8000, items: Sequence[dict
     return text if len(text) <= limit else text[:limit].rstrip() + "\n… (cut; `search` finds the rest)"
 
 
+def listing(query: str | None = None, limit: int = 200) -> dict[str, Any]:
+    """The dashboard's view: the shift, then entries newest first (shift marks included), or a search."""
+    items = entries()
+    start, end = shift(items)
+    shown = search(query, items) if query and query.strip() else list(reversed(items))
+    return {
+        "shift": {"on": start is not None and end is None,
+                  "start": pacific(start) if start else None, "end": pacific(end) if end else None},
+        "count": sum(1 for e in items if e["kind"] in ("investigation", "note")),
+        "matches": len(shown),
+        "entries": [{**e, "when": pacific(when(e))} for e in shown[:limit]],
+    }
+
+
 # --------------------------------------------------------------------------- writing
 
 

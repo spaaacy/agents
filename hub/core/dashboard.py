@@ -1,6 +1,8 @@
 """The hub's local dashboard: one page and a small JSON API, served from the hub process on 127.0.0.1.
 
 GET  /                         the page (dashboard.html)
+GET  /favicon.png              the tab icon (the Slack app's avatar)
+GET  /api/oncall?q=&limit=     the on-call notebook (oncall_notes.listing): the shift, entries newest first, or a search
 GET  /api/token                the token POSTs need (same-origin pages only)
 GET  /api/state                hub.snapshot() plus the last 100 jobs
 GET  /api/jobs?plugin=&status=&limit=
@@ -28,13 +30,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
-from . import events
+from . import events, oncall_notes
 
 if TYPE_CHECKING:
     from .hub import Hub
 
 log = logging.getLogger("hub.dashboard")
 PAGE = Path(__file__).resolve().parent / "dashboard.html"
+FAVICON = Path(__file__).resolve().parent / "favicon.png"
 JOB_PATH = re.compile(r"^/api/jobs/([A-Za-z0-9-]{1,40})(/events)?$")
 MAX_BODY = 16_384
 EVENT_TAIL = 400
@@ -107,6 +110,12 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if url.path in ("/", "/index.html"):
                 return self._send(200, PAGE.read_bytes(), "text/html; charset=utf-8")
+            if url.path in ("/favicon.png", "/favicon.ico"):
+                return self._send(200, FAVICON.read_bytes(), "image/png")
+            if url.path == "/api/oncall":
+                query = parse_qs(url.query)
+                limit = min(1000, max(1, int((query.get("limit") or ["200"])[0])))
+                return self._json(oncall_notes.listing((query.get("q") or [""])[0], limit))
             if url.path == "/api/token":
                 if not self._origin_ok():
                     return self._error(HTTPStatus.FORBIDDEN, "cross-origin")

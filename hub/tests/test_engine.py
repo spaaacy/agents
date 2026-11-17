@@ -131,7 +131,7 @@ class ReviewScope(unittest.TestCase):
         self.assertEqual(engine.current()["codex"], {"model": "gpt-6.1-sol", "effort": "medium"})
 
     def test_switching_reviews_leaves_the_other_plugins_alone_and_back(self):
-        engine.set_model("sol", "high", scope="reviews")
+        engine.set_model("gpt-6.1-sol", "high", scope="reviews")
         self.assertEqual(engine.current(scope="reviews")["codex"], {"model": "gpt-6.1-sol", "effort": "high"})
         self.assertFalse(self.all_file.exists())
         engine.choose("claude", scope="reviews")
@@ -148,7 +148,7 @@ class ReviewScope(unittest.TestCase):
 
     def test_cli_takes_the_scope(self):
         with mock.patch("builtins.print") as printed:
-            self.assertEqual(engine.model_main(["reviews", "sol", "--effort", "high"]), 0)
+            self.assertEqual(engine.model_main(["reviews", "gpt-6.1-sol", "--effort", "high"]), 0)
         self.assertIn("PR reviews now run on codex (gpt-6.1-sol, high effort)", printed.call_args[0][0])
         with mock.patch("builtins.print") as printed:
             engine.effort_main(["reviews"])

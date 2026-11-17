@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agents hub</title>
+<link rel="icon" type="image/png" href="/favicon.png">
 <style>
   :root {
     --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f24; --muted: #626b76; --line: #dfe3e8;
@@ -16,6 +17,7 @@
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
   header { position: sticky; top: 0; z-index: 2; background: var(--panel); border-bottom: 1px solid var(--line);
@@ -57,6 +59,26 @@
   a { color: var(--accent); }
   .detail h2 { font-size: 15px; margin: 0 0 6px; overflow-wrap: anywhere; }
   .detail .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 6px 0; }
+  h1 { display: flex; align-items: center; gap: 8px; }
+  .logo { width: 22px; height: 22px; border-radius: 6px; }
+  .tabs { display: flex; gap: 6px; }
+  .notebook .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .notebook .bar h2 { font-size: 14px; margin: 0 auto 0 0; }
+  .notebook .bar input { width: min(320px, 100%); }
+  .nb-add { display: flex; gap: 8px; margin: 0 0 10px; }
+  .nb-add input { flex: 1; min-width: 0; }
+  .nb-shift { margin: 10px 0 4px; font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+  .nb-shift::before, .nb-shift::after { content: ""; flex: 1; border-top: 1px dashed var(--line); }
+  .nb-item { border-top: 1px solid var(--line); }
+  .nb-item summary { cursor: pointer; padding: 8px 4px; list-style: none; display: grid; gap: 3px; }
+  .nb-item summary::-webkit-details-marker { display: none; }
+  .nb-item summary:hover { background: var(--chip); }
+  .nb-meta { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12px; color: var(--muted); }
+  .nb-kind { font-weight: 600; text-transform: uppercase; letter-spacing: .03em; font-size: 11px; }
+  .nb-kind.investigation { color: var(--accent); } .nb-kind.note { color: var(--ok); }
+  .nb-mon { background: var(--chip); border-radius: 999px; padding: 1px 8px; cursor: pointer; border: 0; font-size: 12px; color: var(--text); }
+  .nb-first { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nb-body { padding: 0 4px 10px; }
   pre { background: var(--code); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin: 8px 0;
         white-space: pre-wrap; word-break: break-word; font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
   pre.log { max-height: 55vh; overflow: auto; }
@@ -70,7 +92,7 @@
 </head>
 <body>
 <header>
-  <h1>Agents</h1>
+  <h1><img class="logo" src="/favicon.png" alt="">Agents</h1>
   <span class="chip" id="hubstate"><span class="dot"></span><span>connecting…</span></span>
   <span class="chip">agent
     <button id="eng-codex" data-engine="codex">Codex</button>
@@ -91,6 +113,23 @@
 <main>
   <pre id="reply" hidden></pre>
   <section class="plugins" id="plugins"></section>
+  <nav class="tabs" aria-label="Views">
+    <button id="tab-jobs" class="on" type="button">Jobs</button>
+    <button id="tab-notebook" type="button">On-call notebook</button>
+  </nav>
+  <section class="card notebook" id="notebook" hidden>
+    <div class="bar">
+      <h2>On-call notebook</h2>
+      <span class="chip" id="nb-shift"><span class="dot"></span><span></span></span>
+      <span class="muted" id="nb-count"></span>
+      <input id="nb-q" type="search" placeholder="search: outbox, 324874860, Cooler" autocomplete="off">
+    </div>
+    <form class="nb-add" id="nb-add">
+      <input id="nb-text" placeholder="add a note: what you found, ruled out or did" autocomplete="off">
+      <button type="submit">Save note</button>
+    </form>
+    <div id="nb-list"></div>
+  </section>
   <div class="layout" id="layout">
     <section class="card feed">
       <div class="bar">
@@ -299,6 +338,77 @@ async function refresh() {
     const hs = $("hubstate"); hs.firstChild.className = "dot bad"; hs.lastChild.textContent = "hub not reachable";
   }
 }
+
+// ------------------------------------------------------------------ the on-call notebook
+const nb = { open: new Set(), timer: null, q: "" };
+
+function showTab(name) {
+  const notebook = name === "notebook";
+  $("tab-jobs").classList.toggle("on", !notebook); $("tab-notebook").classList.toggle("on", notebook);
+  $("layout").hidden = notebook; $("notebook").hidden = !notebook;
+  if (location.hash !== (notebook ? "#notebook" : "")) history.replaceState(null, "", notebook ? "#notebook" : location.pathname);
+  clearInterval(nb.timer);
+  if (notebook) { loadNotebook(); nb.timer = setInterval(loadNotebook, 15000); }
+}
+
+async function loadNotebook() {
+  try {
+    renderNotebook(await getJSON("/api/oncall?q=" + encodeURIComponent(nb.q)));
+  } catch (e) {
+    $("nb-list").replaceChildren(el("div", "empty err", "Couldn't read the notebook: " + e.message));
+  }
+}
+
+function renderNotebook(d) {
+  const chip = $("nb-shift");
+  chip.firstChild.className = "dot" + (d.shift.on ? " ok" : "");
+  chip.lastChild.textContent = d.shift.on ? `on call since ${d.shift.start}`
+    : d.shift.start ? `off call · last shift ${d.shift.start} – ${d.shift.end}` : "no shift recorded";
+  $("nb-count").textContent = nb.q ? `${d.matches} of ${d.count} entries match` : `${d.count} entries`;
+  const list = $("nb-list"); list.replaceChildren();
+  if (!d.entries.length) {
+    list.append(el("div", "empty", nb.q ? "Nothing matches." : "Nothing yet. Page investigations and notes from your sessions land here."));
+    return;
+  }
+  for (const e of d.entries) {
+    if (e.kind === "shift_start" || e.kind === "shift_end") {
+      list.append(el("div", "nb-shift", (e.kind === "shift_start" ? "shift started · " : "shift ended · ") + e.when));
+      continue;
+    }
+    const item = el("details", "nb-item"); item.open = nb.open.has(e.id);
+    item.ontoggle = () => { if (item.open) nb.open.add(e.id); else nb.open.delete(e.id); };
+    const sum = el("summary"), meta = el("div", "nb-meta");
+    meta.append(el("span", "nb-kind " + e.kind, e.kind), el("span", null, e.when), el("span", null, e.source || ""));
+    for (const m of e.monitors || []) {
+      const b = el("button", "nb-mon", m); b.type = "button"; b.title = "show every entry about this monitor";
+      b.onclick = (ev) => { ev.preventDefault(); const id = m.split(" ")[0]; $("nb-q").value = id; nb.q = id; loadNotebook(); };
+      meta.append(b);
+    }
+    const first = (e.text || "").split("\n").find((l) => l.trim()) || "";
+    sum.append(meta, el("div", "nb-first", first));
+    const body = el("div", "nb-body");
+    body.append(el("pre", null, e.text || ""));
+    const row = el("div", "nb-meta");
+    const link = safeLink(e.link);
+    if (link) { const a = el("a", null, "open in Slack ↗"); a.href = link; a.target = "_blank"; a.rel = "noopener noreferrer"; row.append(a); }
+    if (e.session) row.append(el("span", null, "session " + e.session));
+    if (row.childNodes.length) body.append(row);
+    item.append(sum, body); list.append(item);
+  }
+}
+
+$("tab-jobs").onclick = () => showTab("jobs");
+$("tab-notebook").onclick = () => showTab("notebook");
+$("nb-q").oninput = () => { clearTimeout(nb.search); nb.search = setTimeout(() => { nb.q = $("nb-q").value.trim(); loadNotebook(); }, 250); };
+$("nb-add").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const text = $("nb-text").value.trim();
+  if (!text) return;
+  await command(["oncall", "note", text]);
+  $("nb-text").value = "";
+  loadNotebook();
+};
+if (location.hash === "#notebook") showTab("notebook");
 
 for (const name of ["codex", "claude"]) $("eng-" + name).onclick = () => command(["engine", name]);
 $("model").onchange = () => $("model").value && command(["model", $("model").value]);
