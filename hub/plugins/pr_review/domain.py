@@ -39,6 +39,7 @@ LOG = logging.getLogger("hub.pr_review")
 SKILLS = Path.home() / ".agents" / "skills"
 MENTION = re.compile(r"<@([A-Z0-9]+)(?:\|[^>]+)?>")
 PR = re.compile(r"https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/pull/([1-9][0-9]*)(?=[/#?<>|\s)]|$)")
+SHORT_PR = re.compile(r"^(?:([A-Za-z0-9_.-]+)/)?([A-Za-z0-9_.-]+)#([1-9][0-9]*)$")
 SCHEMA = {
     "type": "object", "additionalProperties": False,
     "required": ["status", "reason", "body", "comments"],
@@ -53,6 +54,29 @@ SCHEMA = {
 
 
 # --------------------------------------------------------------------------- matching requests
+
+
+def pr_reference(word: str, owner: str, repos: dict | list = ()) -> tuple[str, int] | None:
+    """One PR named in `!review`: a GitHub link (bare or in Slack's <url|label> wrapping) or [org/]repo#n.
+
+    Only the review org's PRs. A short name may drop the `envoyai-` prefix of a repo this machine has a
+    checkout of (`backend#3134`, `chat-ui#98`). None when the word names no PR.
+    """
+    match = PR.search(word)
+    if match:
+        org, repo, number = match.groups()
+    else:
+        match = SHORT_PR.match(word.strip().strip("<>"))
+        if not match:
+            return None
+        org, repo, number = match.groups()
+        org = org or owner
+    if org.lower() != owner.lower():
+        return None
+    known = {full.split("/", 1)[-1].lower(): full.split("/", 1)[-1] for full in repos}
+    lowered = repo.lower()
+    name = known.get(lowered) or known.get(f"envoyai-{lowered}") or repo
+    return f"{owner}/{name}", int(number)
 
 
 def assigned_prs(text: str, user: str, owner: str) -> list[tuple[str, int]]:
@@ -224,6 +248,9 @@ def database(path: Path) -> sqlite3.Connection:
     """)
     if "reviewer" not in {row["name"] for row in db.execute("PRAGMA table_info(jobs)")}:
         db.execute("ALTER TABLE jobs ADD COLUMN reviewer TEXT")
+    # Where a request came from: NULL for a #devs tag, 'dm' for the owner's `!review` in the bot's DM.
+    if "source" not in {row["name"] for row in db.execute("PRAGMA table_info(requests)")}:
+        db.execute("ALTER TABLE requests ADD COLUMN source TEXT")
     return db
 
 

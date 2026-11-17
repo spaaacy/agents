@@ -65,6 +65,30 @@ class Matching(unittest.TestCase):
                          [('envoy-ai/envoyai-backend', 2909)])
 
 
+class PrReference(unittest.TestCase):
+    REPOS = {'envoy-ai/envoyai-backend': '/x', 'envoy-ai/envoyai-web': '/y', 'envoy-ai/envoyai-chat-ui': '/z'}
+
+    def ref(self, word):
+        return domain.pr_reference(word, 'envoy-ai', self.REPOS)
+
+    def test_links_bare_and_slack_wrapped(self):
+        self.assertEqual(self.ref(A), ('envoy-ai/envoyai-backend', 2909))
+        self.assertEqual(self.ref(f'<{B}>'), ('envoy-ai/envoyai-web', 853))
+        self.assertEqual(self.ref(f'<{A}/files|backend 2909>'), ('envoy-ai/envoyai-backend', 2909))
+
+    def test_short_names_with_or_without_the_prefix(self):
+        self.assertEqual(self.ref('backend#3134'), ('envoy-ai/envoyai-backend', 3134))
+        self.assertEqual(self.ref('Chat-UI#98'), ('envoy-ai/envoyai-chat-ui', 98))
+        self.assertEqual(self.ref('envoy-ai/envoyai-web#12'), ('envoy-ai/envoyai-web', 12))
+        self.assertEqual(self.ref('docs#4'), ('envoy-ai/docs', 4), 'an org repo with no checkout is cloned')
+
+    def test_not_a_pr_of_the_org(self):
+        for word in ('3134', '#3134', 'other/envoyai-backend#1', 'https://github.com/other/x/pull/1',
+                     'https://github.com.evil/envoy-ai/envoyai-backend/pull/1', 'backend', 'please'):
+            with self.subTest(word=word):
+                self.assertIsNone(self.ref(word))
+
+
 class Collector(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -576,6 +600,9 @@ class FakeSlack:
         self.posts.append({'channel': channel, 'text': text, 'thread_ts': thread_ts})
         return f'ts{len(self.posts)}'
 
+    def dm_owner(self, text, thread_ts=None):
+        return self.post(self.bot_dm, text, thread_ts)
+
 
 class DraftButtons(Handle):
     def setUp(self):
@@ -657,6 +684,81 @@ class DraftButtons(Handle):
         pub.assert_not_called()
         self.assertIn('skipped', out.summary)
         self.assertEqual(self.domain_rows()[0][0]['status'], 'skipped')
+
+
+class DirectReview(DraftButtons):
+    """`!review` from the bot's DM: the same review job, even while the #devs pickup is off."""
+
+    def dm_rows(self):
+        return [r for r in self.domain_rows()[1] if r['source'] == 'dm']
+
+    def direct_job(self):
+        return next(j for j in self.hub.store.jobs(plugin='pr_review') if j.payload.get('direct'))
+
+    def reviewed(self):
+        first = agent.AgentResult('codex', text='the review', session='codex:s1')
+        second = agent.AgentResult('codex', text=json.dumps(DRAFT), session='codex:s1', structured=DRAFT)
+        return self.run_handle(self.direct_job(), [first, second])[0]
+
+    def test_a_link_queues_one_direct_review_and_says_where_the_draft_goes(self):
+        reply = self.plugin.cmd_review([f'<{A}>', 'backend#2909'])
+        self.assertIn('reviewing envoyai-backend#2909', reply)
+        self.assertIn('Post and Skip', reply)
+        self.assertEqual([(r['repo'], r['number'], r['source']) for r in self.dm_rows()],
+                         [('envoy-ai/envoyai-backend', 2909, 'dm')], 'the same PR twice is one review')
+        job = self.direct_job()
+        self.assertEqual((job.title, job.payload['url']), ('envoy-ai/envoyai-backend#2909', A))
+
+    def test_the_control_command_reaches_it(self):
+        from hub.core import controls
+        self.assertIn('reviewing envoyai-web#853', controls.run_command(self.hub, ['review', B]))
+        self.assertIn('!review', controls.HELP)
+
+    def test_unreadable_words_queue_nothing(self):
+        self.assertIn('which PR', self.plugin.cmd_review([]))
+        reply = self.plugin.cmd_review([A, '2909'])
+        self.assertIn("couldn't read 2909", reply)
+        self.assertEqual(self.dm_rows(), [])
+        self.assertEqual([j for j in self.hub.store.jobs(plugin='pr_review') if j.payload.get('direct')], [])
+
+    def test_it_runs_while_the_devs_pickup_is_off_and_the_draft_comes_back_with_buttons(self):
+        db = self.plugin.db()
+        domain.disable(db)
+        db.close()
+        self.plugin.cmd_review([A])
+        outcome = self.reviewed()
+        self.assertEqual((outcome.status, outcome.extra['review_status']), ('done', 'drafted'), outcome.error)
+        headline, draft = self.hub.slack.posts  # the draft DM and its thread, nothing more
+        self.assertIn('Review draft for', headline['text'])
+        self.assertEqual([o[1] for o in self.hub.actions.offered], ['post', 'skip'])
+
+    def test_a_head_already_reviewed_answers_in_the_dm(self):
+        self.plugin.cmd_review([A])
+        self.reviewed()
+        self.hub.slack.posts.clear()
+        self.plugin.cmd_review([A])
+        job = [j for j in self.hub.store.jobs(plugin='pr_review') if j.payload.get('direct')][0]
+        outcome, ctx, _ = self.run_handle(job, [])
+        self.assertIn('already reviewed', outcome.summary)
+        self.assertEqual(ctx.tasks, [])
+        (line,) = self.hub.slack.posts
+        self.assertEqual(line['channel'], 'D1')
+        self.assertTrue(line['text'].startswith('envoy-ai/envoyai-backend#2909: already reviewed'))
+
+    def test_a_failed_direct_review_answers_in_the_dm(self):
+        self.plugin.cmd_review([A])
+        outcome, _, _ = self.run_handle(self.direct_job(), [agent.AgentResult('codex', error='boom')])
+        self.assertEqual(outcome.status, 'failed')
+        (line,) = self.hub.slack.posts
+        self.assertIn('the review failed', line['text'])
+
+    def test_a_devs_tag_while_off_is_still_cancelled_quietly(self):
+        job = self.job()  # the #devs tag from setUp
+        db = self.plugin.db()
+        domain.disable(db)
+        db.close()
+        outcome, ctx, _ = self.run_handle(job, [])
+        self.assertEqual((outcome.status, ctx.tasks, self.hub.slack.posts), ('cancelled', [], []))
 
 
 class ApprovedPublish(Publishing):

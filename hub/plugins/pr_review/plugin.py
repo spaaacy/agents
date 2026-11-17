@@ -5,6 +5,8 @@ queues one hub job per (message, PR) that mentions the owner. Handle: one
 review of the PR's exact head in its own checkout, two agent turns (the review
 skill, then post-review's draft as structured output) on the reviews setting
 (engine, model and effort of its own: `!model reviews astra`), the draft checks, and a GitHub COMMENT review when posting is on.
+The owner can also ask straight from the bot's DM: `!review <PR link or backend#3134> ...` queues the same
+job for each PR, runs even while the #devs pickup is off, and DMs the outcome when no draft comes back.
 Everything the checks and the publisher rely on is in domain.py.
 
 The review queue keeps its own SQLite file (settings, requests, reviewed
@@ -171,14 +173,72 @@ class PrReview(Plugin):
         cfg = self.domain_cfg()
         queued = []
         for row in db.execute("SELECT * FROM requests WHERE status='queued' ORDER BY CAST(message_ts AS REAL), id"):
-            repo, number = row["repo"], row["number"]
-            job = self.enqueue(f"{repo}#{number}", {
-                "request_id": row["id"], "message_ts": row["message_ts"], "repo": repo, "number": number,
-                "url": f"https://github.com/{repo}/pull/{number}", "channel": cfg["channel_id"],
-            }, dedupe=f"{row['message_ts']}:{repo}:{number}")
+            job = self.enqueue_request(row, cfg)
             if job:
                 queued.append(job)
         return queued
+
+    def enqueue_request(self, row: sqlite3.Row, cfg: dict[str, Any]) -> Job | None:
+        repo, number = row["repo"], row["number"]
+        return self.enqueue(f"{repo}#{number}", {
+            "request_id": row["id"], "message_ts": row["message_ts"], "repo": repo, "number": number,
+            "url": f"https://github.com/{repo}/pull/{number}", "channel": cfg["channel_id"],
+            "direct": row["source"] == "dm",
+        }, dedupe=f"{row['message_ts']}:{repo}:{number}")
+
+    # ------------------------------------------------------------------ asked for in the DM: !review
+
+    def aliases(self) -> dict[str, Callable[[list[str]], str]]:
+        return {"review": self.cmd_review}
+
+    def cmd_review(self, args: list[str]) -> str:
+        """`!review <PR link or backend#3134> ...`: review each PR now, the same job a #devs tag queues."""
+        if not args:
+            return "which PR? `!review <PR link>` or `!review backend#3134`"
+        cfg = self.domain_cfg()
+        found: list[tuple[str, int]] = []
+        unread = []
+        for word in args:
+            ref = domain.pr_reference(word, cfg["owner"], cfg.get("local_repos", {}))
+            if ref is None:
+                unread.append(word)
+            elif ref not in found:
+                found.append(ref)
+        if unread:
+            return (f"couldn't read {', '.join(unread)} as one of {cfg['owner']}'s PRs: "
+                    "give the PR link or `repo#number` (backend#3134)")
+        db = self.db()
+        try:
+            names = []
+            for repo, number in found:
+                with db:
+                    cursor = db.execute("INSERT INTO requests(message_ts,repo,number,source) VALUES (?,?,?,'dm')",
+                                        (f"{time.time():.6f}", repo, number))
+                row = db.execute("SELECT * FROM requests WHERE id=?", (cursor.lastrowid,)).fetchone()
+                job = self.enqueue_request(row, cfg)
+                names.append(f"{repo.split('/', 1)[-1]}#{number}" + (f" (`{job.id}`)" if job else ""))
+            posting = (domain.setting(db, "enabled_at") and domain.setting(db, "mode") == "post"
+                       and domain.setting(db, "posting_authorized_at"))
+        finally:
+            db.close()
+        then = ("it posts on GitHub when it's done, since posting is on" if posting
+                else "the draft comes back here with Post and Skip")
+        return f"reviewing {', '.join(names)} on {engine.describe(engine.current(scope='reviews'))}; {then}"
+
+    def tell_owner(self, job: Job, outcome: JobResult) -> None:
+        """A `!review` that ends without a draft DM (already reviewed, closed, posted, failed) still answers."""
+        if outcome.status == "cancelled" or (outcome.extra or {}).get("review_status") == "drafted":
+            return
+        slack = self.hub.slack
+        if slack is None:
+            return
+        line = f"{job.title}: {outcome.summary or f'the review failed: {outcome.error}'}"
+        if outcome.link and outcome.link not in line:
+            line += f"\n{outcome.link}"
+        try:
+            slack.dm_owner(line)
+        except Exception:  # noqa: BLE001 - the dashboard has the outcome either way
+            self.log.warning("could not DM the review outcome", exc_info=True)
 
     # ------------------------------------------------------------------ one review
 
@@ -192,7 +252,8 @@ class PrReview(Plugin):
             request = db.execute("SELECT * FROM requests WHERE id=?", (job.payload.get("request_id"),)).fetchone()
             if request is None:
                 return JobResult("failed", error="the review request is missing from the queue")
-            if not domain.setting(db, "enabled_at"):
+            direct = request["source"] == "dm"
+            if not direct and not domain.setting(db, "enabled_at"):
                 with db:
                     db.execute("UPDATE requests SET status='skipped_disabled' WHERE id=? AND status='queued'",
                                (request["id"],))
@@ -201,7 +262,10 @@ class PrReview(Plugin):
             retry = job.attempt > 1
             if request["status"] not in ("queued", "running") and not (retry and request["status"] == "failed"):
                 return JobResult("done", summary=f"request already {request['status']}", link=job.payload.get("url"))
-            return await self.review(request, ctx, cfg, db, retry=retry)
+            outcome = await self.review(request, ctx, cfg, db, retry=retry)
+            if direct:
+                self.tell_owner(job, outcome)
+            return outcome
         finally:
             db.close()
 

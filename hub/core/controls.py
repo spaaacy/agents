@@ -19,6 +19,7 @@ In the bot's DM, a message from the owner that starts with the control prefix
   !bg <task>              run a task in the background, read-only; the answer lands here
   !oncall [search <words> | note <text>]   the on-call notebook: this shift, then earlier pages
   !bg --changes <task>    a task that may change code or tickets: asks for your OK first
+  !review <PR link | backend#3134> ...   review those PRs now, the same as a #devs tag; the draft comes back here
   !<plugin> <command> ... a plugin's own command
   !help
 

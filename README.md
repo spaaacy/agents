@@ -49,7 +49,7 @@ For Slack account setup, open the app's **Plugins** tab, find **Slack**, install
 
 ## Background agents: the hub
 
-One process, the agents hub (`hub/`, LaunchAgent `ai.envoy.agents-hub`), runs every agent that works on this Mac with nobody watching. Each one is a plugin: `slack_ask` answers Aakif in Slack, `on_call` investigates Datadog pages while he is on call, and `pr_review` reviews the PRs he is tagged on in #devs. They share one job queue (on-call pages first, then Slack questions, then reviews), one Slack connection, one agent runner and one record of every run. A new agent is a new folder under `hub/plugins/` and one line in `hub/config.json`; `hub/README.md` covers the plugin model, setup and limits.
+One process, the agents hub (`hub/`, LaunchAgent `ai.envoy.agents-hub`), runs every agent that works on this Mac with nobody watching. Each one is a plugin: `slack_ask` answers Aakif in Slack, `on_call` investigates Datadog pages while he is on call, and `pr_review` reviews the PRs he is tagged on in #devs, or sends it with `!review <PR link>` in the bot's DM. They share one job queue (on-call pages first, then Slack questions, then reviews), one Slack connection, one agent runner and one record of every run. A new agent is a new folder under `hub/plugins/` and one line in `hub/config.json`; `hub/README.md` covers the plugin model, setup and limits.
 
 ```sh
 agents status                  # what runs, what waits, what failed
