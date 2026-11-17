@@ -348,11 +348,12 @@ def skill_text(path: Path = SKILL_FILE) -> str:
 
 NOTEBOOK = """
 
-Already in Aakif's on-call notebook (shared with his own sessions): the current \
-shift, then earlier entries about these monitors. Build on it: don't redo work it \
-already shows, say when a page matches an earlier one and what it was then, and \
-say so when the evidence now contradicts it. The hub saves your report to the \
-notebook when you finish; don't write to it yourself.
+Aakif's on-call memory (shared with his own sessions): what each monitor usually \
+turns out to be, what to check first, what was ruled out, and what is still open, \
+then any notebook entries newer than it. Build on it: don't redo work it already \
+shows, say when a page matches a known pattern and what it was then, and say so \
+when the evidence now contradicts it. The hub saves your report to the notebook \
+and folds it into the memory when you finish; don't write to either yourself.
 
 {notes}"""
 
@@ -525,6 +526,7 @@ class OnCall(Plugin):
                     self.last_error = f"{type(exc).__name__}: {exc}"[:300]
                     self.log.warning("poll failed: %s", self.last_error)
                 next_poll = now + poll_every
+                self.queue_memory_update()
             self.flush()
             self.hub.stopping.wait(5)
 
@@ -638,7 +640,44 @@ class OnCall(Plugin):
 
     # ------------------------------------------------------------------ a job
 
+    def queue_memory_update(self) -> Job | None:
+        """Fold notebook entries the memory doesn't take in yet into it, one batch per job (low priority)."""
+        try:
+            pending = oncall_notes.unconsolidated()
+        except Exception:  # noqa: BLE001
+            self.log.warning("could not read the on-call notebook", exc_info=True)
+            return None
+        if not pending:
+            return None
+        batch = pending[: oncall_notes.MEMORY_BATCH]
+        return self.enqueue(f"update the on-call memory ({len(batch)} new entr{'y' if len(batch) == 1 else 'ies'})",
+                            {"memory": True}, dedupe=f"memory:{batch[-1]['id']}", priority=10)
+
+    def update_memory(self, ctx: JobContext) -> JobResult:
+        """Rewrite memory.md with the agent from the next batch of entries."""
+        items = oncall_notes.entries()
+        batch = oncall_notes.unconsolidated(items)[: oncall_notes.MEMORY_BATCH]
+        if not batch:
+            return JobResult(status="done", summary="the on-call memory is up to date")
+        prompt = oncall_notes.memory_prompt(oncall_notes.read_memory(), batch, oncall_notes.monitor_stats(items),
+                                            oncall_notes.shift_line(items))
+        engine_name = agent.engine.engine()
+        result = ctx.run_agent(agent.AgentTask(
+            prompt=prompt, cwd=Path.home(), timeout=900, engine=engine_name,
+            claude_settings=SETTINGS_FILE, claude_allowed_tools=[],
+        ))
+        text = oncall_notes.clean_memory(result.text) if not result.error else None
+        if text is None:
+            return JobResult(status="failed", error=result.error or "the answer was not a memory document",
+                             engine=result.engine, session=result.session, tokens=result.tokens, cost=result.cost_usd)
+        oncall_notes.save_memory(text, batch[-1])
+        self.queue_memory_update()  # the next batch, when the first build has more
+        return JobResult(status="done", summary=f"on-call memory updated from {len(batch)} new entries",
+                         engine=result.engine, session=result.session, tokens=result.tokens, cost=result.cost_usd)
+
     def handle(self, job: Job, ctx: JobContext) -> JobResult:
+        if job.payload.get("memory"):
+            return self.update_memory(ctx)
         pages = [Page.from_dict(page) for page in job.payload.get("pages", [])]
         if not pages:
             return JobResult(status="failed", error="the job has no pages")
@@ -708,6 +747,7 @@ class OnCall(Plugin):
             try:
                 oncall_notes.add("investigation", result.text, source="Aakif's Dot (page investigation)",
                                  monitors=labels, link=report_link or thread_link, session=result.session)
+                self.queue_memory_update()
             except Exception:  # noqa: BLE001
                 self.log.warning("could not save the report to the on-call notebook", exc_info=True)
         first_line = next((line.strip() for line in body.splitlines() if line.strip()), "")

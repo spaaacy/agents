@@ -368,6 +368,28 @@ class Handle(Base):
         self.assertIn("restarted the worker", command(["search", "worker"]))
         self.assertIn("No shift recorded yet", command([]))
 
+    def test_new_entries_are_folded_into_the_memory_by_a_low_priority_job(self) -> None:
+        oncall_notes.add("investigation", "false alarm: demo mailbox", source="Dot", monitors=["5 Outbox"])
+        job = self.plugin.queue_memory_update()
+        self.assertIsNotNone(job)
+        self.assertEqual((job.payload, job.priority), ({"memory": True}, 10))
+        self.assertIsNone(self.plugin.queue_memory_update(), "one job per notebook state")
+        doc = "# On-call memory\n## Open now\nNothing open.\n## Monitors\n### Outbox (5)\n- usually a demo mailbox"
+        ctx = mock.Mock()
+        ctx.run_agent.return_value = agent.AgentResult("claude", doc, session="claude:m1")
+        outcome = self.plugin.update_memory(ctx)
+        self.assertEqual(outcome.status, "done")
+        self.assertIn("false alarm: demo mailbox", ctx.run_agent.call_args[0][0].prompt)
+        self.assertEqual(oncall_notes.read_memory(), doc)
+        self.assertEqual(oncall_notes.unconsolidated(), [])
+
+    def test_an_answer_that_is_not_a_memory_changes_nothing(self) -> None:
+        oncall_notes.add("note", "x", source="laptop")
+        ctx = mock.Mock()
+        ctx.run_agent.return_value = agent.AgentResult("claude", "I could not do that")
+        self.assertEqual(self.plugin.update_memory(ctx).status, "failed")
+        self.assertIsNone(oncall_notes.read_memory())
+
     def test_codex_gets_its_limits_and_its_resume_command(self) -> None:
         self.engine_name = "codex"
         result = self.plugin.investigate([page("a", 5)], self.run_agent(engine_name="codex"))

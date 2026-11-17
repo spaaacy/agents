@@ -96,6 +96,39 @@ class Notebook(unittest.TestCase):
             f.write("not json\n")
         self.assertEqual([e["text"] for e in notes.entries()], ["kept"])
 
+    def test_the_memory_is_what_readers_get_then_anything_newer(self):
+        first = notes.add("investigation", "outbox: demo mailbox throttled", source="Dot", monitors=["5 Outbox"])
+        self.assertEqual([e["id"] for e in notes.unconsolidated()], [first["id"]])
+        self.assertIn("demo mailbox throttled", notes.digest(), "no memory yet: the entries themselves")
+        doc = notes.clean_memory("```markdown\n# On-call memory\n## Open now\nNothing open.\n## Monitors\n### Outbox (5)\n- usually a demo mailbox\n```")
+        self.assertTrue(doc.startswith("# On-call memory") and doc.endswith("usually a demo mailbox"))
+        notes.save_memory(doc, first)
+        self.assertEqual(notes.unconsolidated(), [])
+        later = notes.add("note", "restarted the worker", source="laptop", monitors=["5 Outbox"])
+        text = notes.digest(monitors=["5"])
+        self.assertIn("### Outbox (5)", text)
+        self.assertLess(text.index("### Outbox"), text.index("Newer than the memory"))
+        self.assertIn("restarted the worker", text)
+        self.assertEqual([e["id"] for e in notes.unconsolidated()], [later["id"]])
+        self.assertIsNone(notes.clean_memory("sorry, I can't"))
+
+    def test_the_prompt_carries_the_counts_and_the_new_entries(self):
+        notes.add("investigation", "first", source="Dot", monitors=["5 Outbox"], at=T0)
+        notes.add("investigation", "second", source="Dot", monitors=["5 Outbox stalled"], at=T0 + timedelta(days=1))
+        items = notes.entries()
+        prompt = notes.memory_prompt(None, items, notes.monitor_stats(items), notes.shift_line(items))
+        self.assertIn("5 Outbox stalled: in 2 entries", prompt)
+        self.assertIn("(none yet: build it from the entries)", prompt)
+        self.assertIn("second", prompt)
+        self.assertIn("never customer message text", prompt)
+
+    def test_rebuild_starts_over_from_every_entry(self):
+        entry = notes.add("note", "x", source="laptop")
+        notes.save_memory("# On-call memory\n" + "body " * 20, entry)
+        self.assertEqual(notes.unconsolidated(), [])
+        self.assertIn("rebuilt", notes.command(["rebuild"], source="x"))
+        self.assertEqual(len(notes.unconsolidated()), 1)
+
     def test_mcp_tools_read_and_write_it_without_the_hub(self):
         server = mcp_server.Server()
         saved = server.call("oncall_note", {"text": "ruled out the deploy", "monitors": ["5 Outbox"], "investigation": True})

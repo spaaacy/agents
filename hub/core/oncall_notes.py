@@ -7,6 +7,11 @@ One append-only file kept forever, ~/.agents/state/on-call/notes.jsonl (not in g
   note                    anything he or a session saves on purpose: what was ruled out, what was done
 notebook.md beside it is the same entries rendered for reading: the current shift first, then the rest.
 
+memory.md is what the entries add up to: one short document by monitor (what it usually turns out to be, how often
+it paged, what to check first, what was ruled out) plus what is still open. The hub rewrites it with an agent after
+new entries land (memory_prompt / save_memory; memory.json says which entry it reaches), and digest() hands it to
+every reader, followed by any entries newer than it.
+
 Who writes: the hub (shift marks, every page investigation), local sessions through the agents-hub MCP tool
 `oncall_note` (the /on-call skill saves its findings that way), `agents oncall note ...`, and `!oncall note ...`
 in Slack. Who reads: the hub's page investigations (in their prompt), Slack answers and local sessions (this
@@ -50,6 +55,14 @@ def notes_file() -> Path:
 
 def rendered_file() -> Path:
     return folder() / "notebook.md"
+
+
+def memory_file() -> Path:
+    return folder() / "memory.md"
+
+
+def memory_state_file() -> Path:
+    return folder() / "memory.json"
 
 
 # --------------------------------------------------------------------------- reading
@@ -145,8 +158,8 @@ def brief(entry: dict[str, Any]) -> str:
     return f"- {pacific(when(entry))}{' · ' + mons if mons else ''}: {first_line(entry)[:160]}"
 
 
-def digest(monitors: Iterable[str] = (), limit: int = 8000, items: Sequence[dict[str, Any]] | None = None) -> str:
-    """What an investigation reads first. This shift: the entries about the given monitors in full, then the
+def log_digest(monitors: Iterable[str] = (), limit: int = 8000, items: Sequence[dict[str, Any]] | None = None) -> str:
+    """The entries themselves, for when there is no memory yet. This shift: the entries about the given monitors in full, then the
     newest others in full and the rest one line each. Then earlier shifts: entries about those monitors, then the
     most recent other findings in one line each."""
     items = entries() if items is None else list(items)
@@ -195,12 +208,167 @@ def digest(monitors: Iterable[str] = (), limit: int = 8000, items: Sequence[dict
     return text if len(text) <= limit else text[:limit].rstrip() + "\n… (cut; `search` finds the rest)"
 
 
+# --------------------------------------------------------------------------- the memory
+
+MEMORY_BATCH = 15          # entries folded in per rewrite (the first build takes several)
+MEMORY_TITLE = "# On-call memory"
+
+
+def memory_state() -> dict[str, Any]:
+    try:
+        state = json.loads(memory_state_file().read_text())
+        return state if isinstance(state, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def read_memory() -> str | None:
+    try:
+        text = memory_file().read_text().strip()
+    except OSError:
+        return None
+    return text or None
+
+
+def unconsolidated(items: Sequence[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """Investigations and notes the memory does not take in yet, oldest first."""
+    items = entries() if items is None else list(items)
+    findings = [e for e in items if e["kind"] in ("investigation", "note")]
+    through = memory_state().get("through")
+    ids = [e["id"] for e in findings]
+    if read_memory() is None or not through or through not in ids:
+        return findings
+    return findings[ids.index(through) + 1:]
+
+
+def monitor_stats(items: Sequence[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Per monitor id: its latest label, how many entries name it, and the first and last of them (PT dates)."""
+    stats: dict[str, dict[str, Any]] = {}
+    for e in items:
+        if e["kind"] not in ("investigation", "note"):
+            continue
+        for label in e.get("monitors", []):
+            ids = monitor_ids([label])
+            if not ids:
+                continue
+            mid = next(iter(ids))
+            s = stats.setdefault(mid, {"label": label, "count": 0, "first": e["at"], "last": e["at"]})
+            s["label"], s["count"], s["last"] = label, s["count"] + 1, e["at"]
+    for s in stats.values():
+        s["first"], s["last"] = pacific(datetime.fromisoformat(s["first"])), pacific(datetime.fromisoformat(s["last"]))
+    return stats
+
+
+def memory_prompt(current: str | None, new: Sequence[dict[str, Any]], stats: dict[str, dict[str, Any]],
+                  shift_line: str) -> str:
+    """The rewrite request: the memory as it stands, the counts, the entries to fold in."""
+    counts = "\n".join(f"- {s['label']}: in {s['count']} entries, {s['first']} to {s['last']}"
+                        for s in sorted(stats.values(), key=lambda s: s["last"], reverse=True)) or "- none yet"
+    return f"""You keep Aakif's on-call memory: one short document that every on-call investigation reads before it \
+starts (his own Claude and Codex sessions and his agents hub), so it can build on what is already known instead of \
+starting from zero. Rewrite it to take in the new notebook entries below. Answer with only the new document, in \
+Markdown, starting with the line "{MEMORY_TITLE}"; nothing before or after it.
+
+Shape:
+{MEMORY_TITLE}
+## Open now
+What is still unresolved or worth watching, one bullet each, newest first, each with the monitor or customer it is \
+about. Drop what the entries show resolved. "Nothing open." when there is nothing.
+## Monitors
+One "### <monitor name> (<id>)" per monitor that has paged, most recent first. Under each, short lines:
+- what it watches and what it usually turns out to be ("usually a false alarm: ...", "real when ...");
+- "Paged N times, <first> to <last>" from the counts below;
+- what to check first next time;
+- what was ruled out;
+- open tickets, PRs or follow-ups.
+Fold repeats into the pattern; keep a dated line only for a page that differed from the usual.
+## Known causes
+Causes that recur across monitors (a deploy pattern, one customer's mailbox, a provider outage): how to recognise \
+each, and what fixed it.
+
+Rules: plain English, short lines, no filler. Facts from the entries and the current memory only, never guessed. \
+When a newer entry contradicts an older one, the newer wins. Counts and ids only, never customer message text. Keep \
+it under about 1,500 words: compress older detail, never drop a monitor.
+
+Shift: {shift_line}
+
+Counts per monitor, from every entry:
+{counts}
+
+The memory as it stands:
+{current or "(none yet: build it from the entries)"}
+
+New entries, oldest first:
+""" + "\n\n".join(fmt(e, 4000) for e in new)
+
+
+def clean_memory(text: str) -> str | None:
+    """The agent's answer as a memory document, or None when it is not one."""
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else ""
+        text = text.rsplit("```", 1)[0].strip()
+    start = text.find(MEMORY_TITLE)
+    if start < 0:
+        return None
+    text = text[start:].strip()
+    return text if len(text) > len(MEMORY_TITLE) + 40 else None
+
+
+def save_memory(text: str, through: dict[str, Any]) -> None:
+    """Write the new memory and the entry it reaches; the previous one is kept as memory.prev.md."""
+    folder().mkdir(parents=True, exist_ok=True)
+    if memory_file().exists():
+        memory_file().replace(folder() / "memory.prev.md")
+    tmp = memory_file().with_suffix(f".{os.getpid()}.tmp")
+    tmp.write_text(text.strip() + "\n")
+    tmp.replace(memory_file())
+    state = {"through": through["id"], "through_at": through["at"],
+             "updated": datetime.now(UTC).isoformat(timespec="seconds")}
+    memory_state_file().write_text(json.dumps(state) + "\n")
+
+
+def reset_memory() -> None:
+    """Make the next rewrite start over from every entry."""
+    if memory_file().exists():
+        memory_file().replace(folder() / "memory.prev.md")
+    memory_state_file().unlink(missing_ok=True)
+
+
+def shift_line(items: Sequence[dict[str, Any]]) -> str:
+    start, end = shift(items)
+    if start is None:
+        return "no shift recorded"
+    return f"on call since {pacific(start)}" if end is None else f"not on call; last shift {pacific(start)} to {pacific(end)}"
+
+
+def digest(monitors: Iterable[str] = (), limit: int = 8000, items: Sequence[dict[str, Any]] | None = None) -> str:
+    """What an investigation reads first: the memory, then any entries newer than it (the paging monitors' first).
+    Before there is a memory, the entries themselves."""
+    items = entries() if items is None else list(items)
+    memory = read_memory()
+    if memory is None:
+        return log_digest(monitors, limit, items)
+    wanted = monitor_ids(monitors)
+    newer = list(reversed(unconsolidated(items)))
+    newer.sort(key=lambda e: not (wanted and monitor_ids(e.get("monitors", [])) & wanted))
+    parts = [f"Shift: {shift_line(items)}", "", memory]
+    if newer:
+        parts += ["", "Newer than the memory (not folded in yet), newest first:"] + [fmt(e, 1500) for e in newer[:5]]
+    text = "\n".join(parts)
+    return text if len(text) <= limit else text[:limit].rstrip() + "\n… (cut; `search` finds the entries)"
+
+
 def listing(query: str | None = None, limit: int = 200) -> dict[str, Any]:
     """The dashboard's view: the shift, then entries newest first (shift marks included), or a search."""
     items = entries()
     start, end = shift(items)
     shown = search(query, items) if query and query.strip() else list(reversed(items))
+    state = memory_state()
     return {
+        "memory": read_memory(),
+        "memory_updated": pacific(datetime.fromisoformat(state["updated"])) if state.get("updated") else None,
+        "pending": len(unconsolidated(items)),
         "shift": {"on": start is not None and end is None,
                   "start": pacific(start) if start else None, "end": pacific(end) if end else None},
         "count": sum(1 for e in items if e["kind"] in ("investigation", "note")),
@@ -263,7 +431,7 @@ def render() -> None:
     in_shift = [e for e in items if start and when(e) >= start and (end is None or when(e) <= end)]
     rest = [e for e in reversed(items) if e["kind"] in ("investigation", "note") and e not in in_shift]
     lines = ["# On-call notebook", "", "Written by the agents hub and Aakif's sessions; the source of truth is "
-             "notes.jsonl beside this file.", "", digest(items=items, limit=20000)]
+             "notes.jsonl beside this file.", "", log_digest(items=items, limit=20000)]
     if rest:
         lines += ["", "## Everything earlier, newest first", ""]
         lines += [fmt(e, 4000) for e in rest[:RENDERED_ENTRIES]]
@@ -280,8 +448,11 @@ def render() -> None:
 def command(words: Sequence[str], *, source: str) -> str:
     """`oncall [show [--monitor ID]...] | search <words> | note <text> [--monitor "ID name"]...`, as a reply."""
     words = list(words)
-    cmd = words[0] if words and words[0] in ("show", "search", "note") else "show"
-    rest = words[1:] if words and words[0] in ("show", "search", "note") else words
+    cmd = words[0] if words and words[0] in ("show", "search", "note", "rebuild") else "show"
+    rest = words[1:] if words and words[0] in ("show", "search", "note", "rebuild") else words
+    if cmd == "rebuild":
+        reset_memory()
+        return "the on-call memory will be rebuilt from every entry within a minute (the hub does it)"
     monitors: list[str] = []
     while "--monitor" in rest:
         i = rest.index("--monitor")

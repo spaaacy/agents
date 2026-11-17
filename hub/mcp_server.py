@@ -54,10 +54,11 @@ TOOLS = [
     },
     {
         "name": "oncall_notes",
-        "description": "Aakif's on-call notebook, shared with his agents hub (Aakif's Dot): what each Datadog page "
-                       "turned out to be, what was ruled out and what was done, this shift first. Read it before "
-                       "investigating a page or answering about an alert or incident. With monitors: also earlier "
-                       "entries about those monitors. With query: every entry holding all the words.",
+        "description": "Aakif's on-call memory, shared with his agents hub (Aakif's Dot): what each Datadog monitor "
+                       "usually turns out to be, what to check first, what was ruled out and what is still open, then "
+                       "any notebook entries newer than it. Read it before investigating a page or answering about an "
+                       "alert or incident. With monitors: their newer entries come first. With query: every notebook "
+                       "entry holding all the words.",
         "inputSchema": {"type": "object", "properties": {
             "monitors": {"type": "array", "items": {"type": "string"}, "description": "Datadog monitor ids"},
             "query": {"type": "string", "description": "words to search every entry for"}}},

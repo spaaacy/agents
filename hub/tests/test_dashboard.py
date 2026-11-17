@@ -116,7 +116,7 @@ class Dashboard(unittest.TestCase):
         self.assertEqual((status, body[:4]), (200, b"\x89PNG"))
         status, body = self.request("/")
         self.assertIn(b'rel="icon"', body)
-        self.assertIn(b"On-call notebook", body)
+        self.assertIn(b"On-call memory", body)
         with mock.patch.dict("os.environ", {"ONCALL_NOTES_DIR": str(Path(self.tmp.name) / "notes")}):
             from hub.core import oncall_notes
             oncall_notes.add("shift_start", source="hub")
