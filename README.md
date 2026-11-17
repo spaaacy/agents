@@ -23,6 +23,7 @@ The skills under `skills/` are one lifecycle, and each one names its neighbours 
   /review <pr>          the author's own pre-PR review (read-only); run again, it reviews only what's new since
     /post-review        posts it as one GitHub review; /review asks whether to run it
   /impact <pr>          what a PR delivers for carriers, reps and admins, plus its new tables/columns (read-only)
+  /impact <pr> schema   a diagram of the PR's migration: new tables and columns, what each holds (read-only)
   /fix <pr|ticket>      keeps PRs level with development and CI green, triages red evals; never merges
   reviewers comment
   /address-review <pr>  verify the findings, then fix, reply, push, and get the required CI checks green
