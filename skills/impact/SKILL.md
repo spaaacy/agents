@@ -1,24 +1,29 @@
 ---
 name: impact
-description: Explain what a pull request (or every open PR for a Linear ticket) delivers purely from the product perspective, as TL;DR bullet points - what changes for carriers, customers, reps and admins, the defaults and switches, who is left out, the new tables or columns, and what it takes to ship - with no code, file names or jargon. Read-only. A `schema` mode instead draws a backend PR's migration: its new tables and columns, as a diagram. Use when the user asks what a PR delivers, for a product summary or TL;DR of a PR, what a change means for users, or to see or visualize a PR's schema or database changes.
+description: Show what a pull request (or every open PR for a Linear ticket) delivers from the product side, as one page - what changes for carriers, customers, reps and admins, the defaults and switches, who is left out, what it takes to ship, real screenshots of every screen or email it changes (before and after), and a diagram of its new tables and columns - with no code or jargon in the words. Read-only on the repos. `text` gives the short chat summary only; `schema` only the database diagram. Use when the user asks what a PR delivers, for a product summary or TL;DR of a PR, what a change means for users, what it looks like, or to see a PR's schema or database changes.
 ---
 
-Target: $ARGUMENTS. A PR number or URL is that PR; a Linear key (`ENG-1234`) or URL means every open PR for that ticket across the repos. A bare number is looked up in the current repo first, then `envoyai-web`, `envoyai-chrome-plugin`, `envoyai-chat-ui` (backend PRs are in the 2000s, the others are lower; never guess across repos, ask if two match). Nothing means the PR or ticket this conversation is about (`Shared skill arguments` in `~/.agents/AGENTS.md`), else the open PR for the current branch; if there is none, ask which PR with the client's structured question tool and stop. A trailing `schema` (or `db`, `tables`, or the user asking to see or visualize the schema or database changes) runs schema mode, at the end, instead of the summary.
+Target: $ARGUMENTS. A PR number or URL is that PR; a Linear key (`ENG-1234`) or URL means every open PR for that ticket across the repos. A bare number is looked up in the current repo first, then `envoyai-web`, `envoyai-chrome-plugin`, `envoyai-chat-ui` (backend PRs are in the 2000s, the others are lower; never guess across repos, ask if two match). Nothing means the PR or ticket this conversation is about (`Shared skill arguments` in `~/.agents/AGENTS.md`), else the open PR for the current branch; if there is none, ask which PR with the client's structured question tool and stop.
 
-Flow: standalone and read-only. It changes nothing in the code, on GitHub, in Linear or in Slack. This is the plain-English account of what a change delivers. Posting the result anywhere is a separate ask, and anything posted is plain professional English whatever the chat voice.
+Modes, from a trailing word or the user's ask:
+- default: the page (below), plus a short summary in chat.
+- `text` (or `brief`, `quick`): the chat summary only, no page and no screenshots.
+- `schema` (or `db`, `tables`, or asking to see the schema or database changes): the page with only the header and the database section.
+
+Flow: standalone, and read-only on the code, GitHub, Linear and Slack. Its only writes are temporary checkouts for screenshots, removed at the end, and the page it publishes (private to the user until they share it). Posting the result anywhere is a separate ask, and anything posted is plain professional English whatever the chat voice.
 
 ## Read
 
-- `gh pr view <pr> -R envoy-ai/<repo> --json number,title,body,state,isDraft,baseRefName,headRefName,mergedAt,url`, plus `gh pr diff <pr>` and the changed file list.
+- `gh pr view <pr> -R envoy-ai/<repo> --json number,title,body,state,isDraft,baseRefName,headRefName,headRefOid,baseRefOid,mergedAt,url`, plus `gh pr diff <pr>` and the changed file list.
 - The ticket(s) the PR names, through the Linear tool when one is available: the ask, and any product decisions in the comments.
-- A sibling PR the body names (a web or extension PR for the same ticket) only for what it adds that a person sees, such as a settings toggle.
+- The ticket's other PRs (`gh pr list -R envoy-ai/<repo> --search "<KEY>" --state all` in the web, extension and chat-ui repos, plus any the body names). A web, extension or chat-ui sibling is where most of what a person sees lives, so its screens belong on the page too.
 - When the PR folds in other tickets' work, each of those is part of what it delivers.
 
-The PR body can be stale after review rounds. Where the body and the code disagree, the code wins; where a behaviour is unclear from both, say so in the output instead of guessing.
+The PR body can be stale after review rounds. Where the body and the code disagree, the code wins; where a behaviour is unclear from both, say so instead of guessing.
 
-## Output
+## What changes (the words)
 
-Exactly this shape, and nothing else:
+Write these first; the page's top section and the chat summary are both made of them.
 
 ```
 <one sentence: what the PR delivers, in product words>
@@ -42,31 +47,47 @@ Rules:
 - A PR that carries several tickets gets one bullet per ticket's change, each starting with what it is, not the ticket key; the ticket keys go in the Shipping line.
 - Never add benefits the PR does not deliver, and never soften a limit the PR states. Mark anything inferred rather than read with "(inferred)".
 
-## Schema mode
+## What it looks like (real screenshots)
 
-A picture of what the PR's migration does to the database, built to answer "what new tables and columns does this add, and what goes in them". Same read-only rules. Only backend PRs carry migrations; for a ticket, draw each of its backend PRs.
+Whenever the PR, or a sibling PR for the same ticket, changes something a person sees, the page shows the actual screen, rendered by the PR's own code. Never draw a mockup or recreate a screen in HTML and present it as the UI; a screen that could not be captured is listed under "Not shown", with why.
 
-### Read
+Pick the screens from the diff and the ticket: every page, panel, dialog, setting, card or state the change adds or alters (a new toggle, the empty state, the error, the state after a click), each captured in the state that shows the change. One screenshot per change, scoped to the part that changed (the panel or dialog, not the whole window) unless the layout itself is the change. When the screen existed before, capture it at the PR's base too, so the page shows before and after side by side.
 
-- The migration: the files the PR adds or changes under `alembic/versions/`, the `upgrade()` function only (`gh pr diff <pr> -R envoy-ai/envoyai-backend`, or `git show origin/<head>:<path>` after a fetch). No migration: say "No migration in #<n>, so no tables or columns change." and stop.
+How each kind is captured:
+
+- Web (`envoyai-web`): its Playwright setup runs the real app with no backend (`e2e/README.md`: mock tier, `mockLoggedIn` in `e2e/support/mock-api.ts`, `test` from `e2e/support/fixtures.ts`, `appPath()` for the `/app` base path).
+  1. Make a throwaway checkout of the PR's head: `git -C ~/dev/envoyai-web fetch origin <head> && git -C ~/dev/envoyai-web worktree add --detach ~/dev/.claude/worktrees/impact-web-<pr> <head sha>`, then `cp -Rc ~/dev/envoyai-web/node_modules` into it (a copy-on-write clone, never a symlink: vite refuses files reached through a link). When the change lives in chat-ui, build the chat-ui PR's head and link it in the way `CHAT_UI.md` says.
+  2. Write one throwaway spec there, `e2e/zz-impact-capture.spec.ts` (never committed): sign in a mock admin, stub every `/api/*` call the page makes with example data shaped like the real responses (reuse the mocks in the PR's own e2e specs when it has them; the generated API types say the shapes), drive the page into the changed state, and save `locator.screenshot()` PNGs at a 1280×800 viewport to the scratchpad.
+  3. Run it: `npx playwright test e2e/zz-impact-capture.spec.ts --reporter=line` from that checkout (it boots its own dev server on port 5174; one run at a time). Fix the spec until every screenshot shows the intended state; a blank or error page is a broken spec, not a screenshot.
+  4. For "before", run the same spec in a throwaway checkout of the PR's base sha.
+- Extension (`envoyai-chrome-plugin`): it has no browser harness. Show its changes through the web page that renders the same chat-ui component when there is one, else use the screenshots in the PR body or comments (download each with `curl -L -H "Authorization: token $(gh auth token)" <url>`, since the page cannot load GitHub's images), else list it under "Not shown".
+- Emails and messages the backend sends (an award email, a carrier-facing text): render them with the PR's own code and example data (the function the code calls, fed the way its tests feed it, run in a throwaway backend checkout with `poetry run python`), then screenshot the HTML with Playwright (`page.setContent(html)`). A plain-text message is quoted on the page as text, exactly.
+
+Label every screenshot with where it is ("Load Details › Offers, a held offer") and mark it "example data". Remove every throwaway checkout when done (`git worktree remove --force <path>`: they hold nothing but the throwaway spec).
+
+## The database (when the PR has a migration)
+
+Only backend PRs carry migrations; for a ticket, draw each of its backend PRs. No migration: the page's database section says "No database changes" in one line.
+
+- The migration: the files the PR adds or changes under `alembic/versions/`, the `upgrade()` function only.
 - Per table it touches: new (`op.create_table`), dropped (`op.drop_table`), or existing with columns added (`op.add_column`) or removed (`op.drop_column`). Per column: name, type, required or optional (`nullable`), its server default, and what it points at (`sa.ForeignKey`).
-- The model class for each table at the PR head (the SQLModel `table=True` class whose `__tablename__` matches, or the snake-cased class name): the existing columns around the new ones, and what each new column holds, from its `Field(description=...)`, its comment, the code that writes it, the PR body or the backend `CLAUDE.md`. Say it in a few plain words; mark a meaning you guessed "(inferred)".
-- A backfill script the PR adds under `scripts/database/` that fills a new column for old rows: name it on that column ("old rows filled by `backfill_x.py` after the deploy"), since until it runs they read the server default or nothing.
+- The model class for each table at the PR head (the SQLModel `table=True` class whose `__tablename__` matches): the existing columns around the new ones, and what each new column holds, from its `Field(description=...)`, its comment, the code that writes it, the PR body or the backend `CLAUDE.md`. A JSON column's settings model gives the keys it holds, their values and defaults. Say it in a few plain words; mark a meaning you guessed "(inferred)".
+- A backfill script the PR adds under `scripts/database/` that fills a new column for old rows: name it on that column, since until it runs old rows read the server default or nothing.
+- Leave out indexes, constraints, renames, type changes and enum values, except one closing line counting them ("also: 2 indexes, 1 enum value"). Something the migration deliberately leaves for a later release (a column kept so older servers keep working) gets one line too.
 
-Leave out indexes, constraints, renames, type changes and enum values, except one closing line counting them ("also: 2 indexes, 1 enum value"), so the picture stays about what is stored.
+## The page
 
-### Draw it
+In Claude Code, publish one Artifact page per run (load the `artifact-design` skill first, as the Artifact tool requires), written to the scratchpad as `impact-<repo>-<pr>.html` (`impact-<KEY>.html` for a ticket) so running this again in the same conversation updates the same page. Screenshots go in as `data:` PNG URIs (keep the page under the 16MB limit: scope screenshots to what changed). Sections, top to bottom:
 
-In Claude Code, publish it as an Artifact page (load the `artifact-design` skill first, as the Artifact tool requires), written to the scratchpad as `impact-schema-<repo>-<pr>.html` so running this again in the same conversation updates the same page:
+- Header: `#<n> <title>` linked to the PR (every PR for a ticket), open, draft or merged, the ticket, and the one-sentence summary.
+- What changes: the bullets above, grouped by who notices, then Defaults, Left out and Shipping as their own short lines.
+- What it looks like: each change's screenshot, before and after side by side when the screen existed (stacked on a phone), with its label and "example data"; emails and messages as rendered. Left out when nothing visible changes.
+- The database: the header counts ("2 new tables · 5 new columns · 1 column removed") and the migration revision, then one card per table, new tables first, then existing tables gaining columns, then anything dropped. A new table's card lists every column; an existing table's shows its id, the new columns, and the columns they sit beside or point at, with the rest folded behind "N other existing columns". Each column on one row: name, type, required or optional, default, the table it points at ("→ load.id"), and what it holds underneath; new columns stand out (an added marker and colour), removed ones are struck through, existing ones are muted; a JSON column lists the keys it holds. Then the new links between tables ("offer.accepted_by_user_id → user.id") and the "also:" line.
+- Not shown: screens that could not be captured and why, and anything inferred rather than read.
 
-- A header: `#<n> <title>`, open, draft or merged, the migration revision, and counts ("2 new tables · 5 new columns · 1 column removed").
-- One card per table, new tables first, then existing tables gaining columns, then anything dropped. A new table's card is marked new and lists every column. An existing table's card shows `id`, the new columns, and the columns they sit beside or point at, with the rest collapsed behind "N other existing columns".
-- Each column on one row: name, type, required or optional, default, and the table it points at ("→ load.id"), with what it holds underneath in small text. New columns stand out (an added marker and colour), removed ones are struck through, existing ones are muted.
-- A short links list for every new pointer between tables ("offer.accepted_by_user_id → user.id"), and the "also:" line last.
+In chat, alongside the link: the one-sentence summary and the bullets, cut to the five that matter most, and one line on what the page shows ("before/after of the Offers panel and the award email, 2 new columns").
 
-In chat, alongside the link: the first line (what the migration adds, in one sentence), then one bullet per new or removed table or column with what it holds, the same as the summary's Data changes line.
-
-Without an Artifact tool (Codex, or when publishing is refused), draw it in chat as a text diagram in one code block, a box per table:
+Without an Artifact tool (Codex, or when publishing is refused): the full bullets in chat, the database as a text diagram in one code block (a box per table, as below), and the screenshots saved under `~/.agents/state/impact/<repo>-<pr>/` with their paths listed, one line each with its label.
 
 ```
 offer  (existing table, +2 columns)
@@ -74,4 +95,3 @@ offer  (existing table, +2 columns)
   + accepted_by_user_id   uuid → user.id    optional   who accepted it
     id, load_id, carrier_id, status … 30 other existing columns
 ```
-
