@@ -12,6 +12,16 @@ as Slack reports it when the hub starts, so renaming the app needs no code
 change. The owner's messages in the bot's DM that start with the control
 prefix ("!") are hub commands, never questions.
 
+Following a thread: once it has answered in a conversation with other people
+(a channel thread, a DM or group DM with teammates; never its own DM), it
+answers later replies there without a fresh mention, for a day after its last
+answer: it waits about 45 seconds for a burst of messages to end, answers them
+together (or stays quiet when nothing needs an answer: the agent replies
+NO_REPLY), and stops after 8 answers in a row, or as soon as Aakif writes in the
+thread himself, which hands it back to him. Tagging it again restarts it.
+Screenshots in the conversation are downloaded (files:read) and given to the
+agent.
+
 Each Slack thread maps to one agent session (kept tagged with its engine), so a
 follow-up in the thread resumes that conversation; a thread the other engine
 started is answered fresh. The plugin, not the model, posts the answer, so the
@@ -37,6 +47,7 @@ from __future__ import annotations
 import html
 import json
 import re
+import threading
 import time
 import urllib.request
 from collections.abc import Callable
@@ -66,6 +77,18 @@ MAX_PROPOSALS = 3
 IMAGE_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_IMAGES = 6
+# Following a thread: once the bot answers in a conversation with other people, it answers later replies there
+# without a fresh mention, until Aakif writes in the thread himself (he took it back) or it goes quiet.
+FOLLOW_SECONDS = 24 * 3600      # after the last answer
+FOLLOW_QUIET_SECONDS = 45       # wait for a burst of messages to end, then answer them together
+MAX_AUTO_REPLIES = 8            # answers in a row without Aakif tagging it again
+OWN_POST_SECONDS = 20           # his name on a message this soon after an answer is the answer itself
+NO_REPLY = "NO_REPLY"
+AUTO_REQUEST = (
+    "(No new request from Aakif: new replies came in on a thread you answered in, shown above. Answer them as "
+    "you would if he had tagged you, speaking to whoever wrote them. If none of them needs an answer from him "
+    "(a thanks, an acknowledgment, people talking among themselves), reply with exactly NO_REPLY and nothing else.)"
+)
 PROPOSAL_NOTE = "This is the action you proposed in the Slack thread above; carry it out."
 
 
@@ -186,11 +209,13 @@ def reply_detector(mention: Mention, bot_user_id: str | None, owner: str,
 
 
 def earlier_messages(mention: Mention, conversation: list[dict[str, Any]], *, resumed: bool,
-                     is_reply: Callable[[dict[str, Any]], bool]) -> list[dict[str, Any]]:
-    """The messages before the request that the prompt shows: after the last answer when resumed."""
+                     is_reply: Callable[[dict[str, Any]], bool], auto: bool = False) -> list[dict[str, Any]]:
+    """The messages before the request that the prompt shows: after the last answer when resumed. A follow-up
+    (``auto``) has no request message of its own, so the newest reply is part of the conversation."""
     earlier = [
         msg for msg in conversation
-        if msg.get("ts") != mention.ts and float(msg.get("ts", "0")) < float(mention.ts)
+        if (auto and float(msg.get("ts", "0")) <= float(mention.ts))
+        or (msg.get("ts") != mention.ts and float(msg.get("ts", "0")) < float(mention.ts))
     ]
     if resumed:
         replies = [i for i, msg in enumerate(earlier) if is_reply(msg)]
@@ -257,6 +282,7 @@ def build_prompt(
     is_reply: Callable[[dict[str, Any]], bool] | None = None,
     reminder: str | None = None,
     images: dict[str, Path | None] | None = None,
+    auto: bool = False,
 ) -> str:
     """The prompt for one request: the conversation around it, then the request.
 
@@ -265,7 +291,7 @@ def build_prompt(
     """
     is_reply = is_reply or (lambda msg: msg.get("user") == bot_user_id)
     images = images or {}
-    earlier = earlier_messages(mention, conversation, resumed=resumed, is_reply=is_reply)
+    earlier = earlier_messages(mention, conversation, resumed=resumed, is_reply=is_reply, auto=auto)
 
     lines: list[str] = []
     if earlier:
@@ -275,11 +301,14 @@ def build_prompt(
             who = "you" if is_reply(msg) else names(msg.get("user", ""))
             lines.append(f"[{who}] {render_text(msg.get('text', ''), names)}{file_notes(msg, images)}")
         lines.append("")
-    request = render_text(strip_bot_mention(mention.text, bot_user_id), names)
-    asked = next((msg for msg in conversation if msg.get("ts") == mention.ts), {})
-    lines.append("Aakif's request:")
-    lines.append((request or "(he only mentioned you: answer the open question above, speaking to whoever asked it)")
-                 + file_notes(asked, images))
+    if auto:
+        lines.append(AUTO_REQUEST)
+    else:
+        request = render_text(strip_bot_mention(mention.text, bot_user_id), names)
+        asked = next((msg for msg in conversation if msg.get("ts") == mention.ts), {})
+        lines.append("Aakif's request:")
+        lines.append((request or "(he only mentioned you: answer the open question above, speaking to whoever asked it)")
+                     + file_notes(asked, images))
     reminder = turn_reminder() if reminder is None else reminder
     if reminder:
         lines += ["", reminder]
@@ -368,6 +397,8 @@ class SlackAsk(Plugin):
         super().__init__(hub, config)
         self._names: Names | None = None
         self._session_status_ok: bool | None = None  # did Slack take the last agents.sessions.setStatus
+        self._follow_timers: dict[str, threading.Timer] = {}
+        self._follow_lock = threading.Lock()
 
     # ------------------------------------------------------------------ settings
 
@@ -428,8 +459,88 @@ class SlackAsk(Plugin):
             self.triggers(), self.control_prefix,
         )
         if mention is None:
+            self.on_thread_reply(event)
             return
+        self.cancel_follow(mention.channel, mention.thread_ts)  # a direct request covers the pending replies
         self.enqueue(title_for(mention.text, slack.bot_user_id), asdict(mention), dedupe=f"{mention.channel}:{mention.ts}")
+
+    # ------------------------------------------------------------------ following a thread
+
+    def follow_key(self, channel: str, thread_ts: str) -> str:
+        return f"follow:{channel}:{thread_ts}"
+
+    def follow(self, mention: Mention, *, auto: bool) -> None:
+        """After an answer in a conversation with other people: keep answering its thread."""
+        if self.slack is not None and mention.channel == self.slack.bot_dm:
+            return  # in the bot's own DM every message of his is a request already
+        key = self.follow_key(mention.channel, mention.thread_ts)
+        record = self.get(key) or {}
+        now = time.time()
+        self.put(key, {"until": now + int(self.config.get("follow_seconds", FOLLOW_SECONDS)),
+                       "as_user": mention.as_user, "answered": now,
+                       "auto": (int(record.get("auto", 0)) + 1) if auto else 0})
+
+    def unfollow(self, channel: str, thread_ts: str) -> None:
+        self.cancel_follow(channel, thread_ts)
+        self.hub.store.delete_value(self.name, self.follow_key(channel, thread_ts))
+
+    def on_thread_reply(self, event: dict[str, Any]) -> None:
+        """A message that is not a request, in a thread the bot follows: answer it after a quiet spell, or stop
+        following when Aakif writes there himself."""
+        if event.get("type") != "message" or event.get("subtype") or event.get("bot_id"):
+            return
+        channel, ts, thread_ts = event.get("channel"), event.get("ts"), event.get("thread_ts")
+        if not channel or not ts or not thread_ts:
+            return
+        record = self.get(self.follow_key(channel, thread_ts))
+        if not record or float(record.get("until", 0)) < time.time():
+            return
+        if event.get("user") == self.hub.owner:
+            if ts in set(self.get(f"mine:{channel}", [])) or time.time() - float(record.get("answered", 0)) < OWN_POST_SECONDS:
+                return  # the bot's own answer, posted under his name
+            text = str(event.get("text", ""))
+            if self.control_prefix and text.lstrip().startswith(self.control_prefix):
+                return
+            bot = self.slack.bot_user_id if self.slack is not None else None
+            if (bot and f"<@{bot}" in text) or strip_trigger(text, bot, self.triggers()) is not None:
+                return  # him asking the bot again (a channel delivers it as a mention and as a message)
+            self.log.info("Aakif replied in %s:%s himself; no longer following it", channel, thread_ts)
+            self.unfollow(channel, thread_ts)
+            return
+        if int(record.get("auto", 0)) >= int(self.config.get("max_auto_replies", MAX_AUTO_REPLIES)):
+            return
+        self.schedule_follow(channel, thread_ts, ts, bool(record.get("as_user")))
+
+    def schedule_follow(self, channel: str, thread_ts: str, ts: str, as_user: bool) -> None:
+        quiet = float(self.config.get("follow_quiet_seconds", FOLLOW_QUIET_SECONDS))
+        key = self.follow_key(channel, thread_ts)
+        with self._follow_lock:
+            old = self._follow_timers.pop(key, None)
+            if old:
+                old.cancel()
+            if quiet <= 0:
+                timer = None
+            else:
+                timer = threading.Timer(quiet, self.fire_follow, args=(channel, thread_ts, ts, as_user))
+                timer.daemon = True
+                self._follow_timers[key] = timer
+        if timer is None:
+            self.fire_follow(channel, thread_ts, ts, as_user)
+        else:
+            timer.start()
+
+    def cancel_follow(self, channel: str, thread_ts: str) -> None:
+        with self._follow_lock:
+            timer = self._follow_timers.pop(self.follow_key(channel, thread_ts), None)
+        if timer:
+            timer.cancel()
+
+    def fire_follow(self, channel: str, thread_ts: str, ts: str, as_user: bool) -> None:
+        with self._follow_lock:
+            self._follow_timers.pop(self.follow_key(channel, thread_ts), None)
+        mention = Mention(channel, ts, thread_ts, "", as_user=as_user)
+        self.enqueue("follow-up in a thread it answered", {**asdict(mention), "auto": True},
+                     dedupe=f"{channel}:{ts}")
 
     # ------------------------------------------------------------------ the job
 
@@ -557,7 +668,7 @@ class SlackAsk(Plugin):
             self.hub.scheduler.cancel(job_id)
         self.set_session_status(Mention(channel, thread_ts, thread_ts, ""), "active")
 
-    def answer(self, mention: Mention, ctx: JobContext, engine_name: str) -> agent.AgentResult:
+    def answer(self, mention: Mention, ctx: JobContext, engine_name: str, auto: bool = False) -> agent.AgentResult:
         slack = self.slack
         stored = self.get(self.session_key(mention))
         session = agent.resumable(stored, engine_name)
@@ -565,18 +676,18 @@ class SlackAsk(Plugin):
         conversation = fetch_conversation(client, mention, slack.bot_dm)
         is_reply = reply_detector(mention, slack.bot_user_id, self.hub.owner,
                                   set(self.get(f"mine:{mention.channel}", [])))
-        asked = [msg for msg in conversation if msg.get("ts") == mention.ts]
-        files = image_files(earlier_messages(mention, conversation, resumed=False, is_reply=is_reply) + asked)
+        asked = [] if auto else [msg for msg in conversation if msg.get("ts") == mention.ts]
+        files = image_files(earlier_messages(mention, conversation, resumed=False, is_reply=is_reply, auto=auto) + asked)
         folder = self.state_dir / "images" / f"{mention.channel}-{mention.thread_ts or mention.ts}"
         images = download_images(getattr(client, "token", None), files, folder) if files else {}
 
         def prompt(resumed: bool) -> str:
             return build_prompt(mention, conversation, slack.bot_user_id, self.names(), resumed=resumed,
-                                is_reply=is_reply, images=images)
+                                is_reply=is_reply, images=images, auto=auto)
 
         def shown(resumed: bool) -> list[Path]:
             # A resumed session already saw the images before its last answer; send only the new ones.
-            seen = earlier_messages(mention, conversation, resumed=resumed, is_reply=is_reply) + asked
+            seen = earlier_messages(mention, conversation, resumed=resumed, is_reply=is_reply, auto=auto) + asked
             ids = {f["id"] for f in image_files(seen)}
             return [p for fid, p in images.items() if p and fid in ids]
 
@@ -589,6 +700,7 @@ class SlackAsk(Plugin):
 
     def handle(self, job: Job, ctx: JobContext) -> JobResult:
         mention = Mention(**{k: job.payload[k] for k in ("channel", "ts", "thread_ts", "text", "as_user") if k in job.payload})
+        auto = bool(job.payload.get("auto"))
         slack = self.slack
         if slack is None or slack.web is None:
             return JobResult(status="failed", error="Slack is not connected")
@@ -601,7 +713,7 @@ class SlackAsk(Plugin):
             self.put(running, job.id)
             self.set_session_status(mention, "processing", title_for(mention.text, slack.bot_user_id))
         try:
-            result = self.answer(mention, ctx, engine_name)
+            result = self.answer(mention, ctx, engine_name, auto=auto)
         except Exception as exc:  # noqa: BLE001 - every failure is reported in the thread
             self.log.exception("answering %s failed", job.id)
             result = agent.AgentResult(engine_name, error=f"{type(exc).__name__}: {exc}")
@@ -615,6 +727,11 @@ class SlackAsk(Plugin):
                 said = "stopped." if result.error == "cancelled" else f"Couldn't answer this one: {result.error}"
                 reply_ts = self.post(mention, said, result.engine)
                 outcome.status, outcome.error = "failed", result.error
+            elif auto and result.text.strip().upper().startswith(NO_REPLY):
+                if result.session:
+                    self.put(self.session_key(mention), result.session)
+                outcome.summary = "nothing in the new replies needed an answer"
+                reply_ts = None
             else:
                 if result.session:
                     self.put(self.session_key(mention), result.session)
@@ -625,6 +742,8 @@ class SlackAsk(Plugin):
                     self.offer_elsewhere(mention, reply_ts, buttons)
                 first = next((line.strip() for line in text.splitlines() if line.strip()), "")
                 outcome.summary = (first[:197] + "...") if len(first) > 200 else first
+                if reply_ts:
+                    self.follow(mention, auto=auto)
             if reply_ts:
                 outcome.link = slack.permalink(mention.channel, reply_ts, as_user=mention.as_user)
         except Exception as exc:  # noqa: BLE001 - recorded, so the dashboard shows it

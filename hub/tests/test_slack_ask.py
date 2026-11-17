@@ -309,6 +309,82 @@ class Screenshots(unittest.TestCase):
         self.assertIn("Open every screenshot", rules)
         self.assertIn("only when the evidence shows that", rules)
 
+
+class FollowingAThread(unittest.TestCase):
+    """Once it answered in a conversation with other people, it answers their later replies on its own."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.slack = FakeSlack(user_web=FakeWeb())
+        self.plugin, self.hub = make_plugin(self.tmp.name, self.slack, {"follow_quiet_seconds": 0})
+        self.plugin.follow(sa.Mention("D0OTHER", "200.0", "100.0", "@dot check", as_user=True), auto=False)
+        record = self.plugin.get(self.plugin.follow_key("D0OTHER", "100.0"))
+        record["answered"] -= 60  # the answer went out a minute ago
+        self.plugin.put(self.plugin.follow_key("D0OTHER", "100.0"), record)
+
+    def queued(self):
+        return [j for j in self.hub.store.jobs(limit=20) if j.plugin == "slack_ask"]
+
+    def test_a_reply_from_someone_else_is_answered_without_a_mention(self):
+        self.plugin.on_event(event(user="U0SAM", ts="210.0", thread_ts="100.0", text="do we need to reset it?"))
+        jobs = self.queued()
+        self.assertEqual(len(jobs), 1)
+        self.assertTrue(jobs[0].payload["auto"])
+        self.assertTrue(jobs[0].payload["as_user"])
+
+    def test_his_own_reply_hands_the_thread_back(self):
+        self.plugin.on_event(event(user=OWNER, ts="210.0", thread_ts="100.0", text="lemme check on my end"))
+        self.assertIsNone(self.plugin.get(self.plugin.follow_key("D0OTHER", "100.0")))
+        self.plugin.on_event(event(user="U0SAM", ts="220.0", thread_ts="100.0", text="ok thanks"))
+        self.assertEqual(self.queued(), [])
+
+    def test_its_own_answer_under_his_name_is_not_a_takeover(self):
+        self.plugin.remember_mine("D0OTHER", "205.0")
+        self.plugin.on_event(event(user=OWNER, ts="205.0", thread_ts="100.0", text="the answer"))
+        self.assertIsNotNone(self.plugin.get(self.plugin.follow_key("D0OTHER", "100.0")))
+
+    def test_tagging_it_again_is_not_a_takeover(self):
+        self.plugin.on_event(event(user=OWNER, ts="210.0", thread_ts="100.0", channel_type="channel",
+                                   text=f"<@{BOT}> and now?"))
+        self.assertIsNotNone(self.plugin.get(self.plugin.follow_key("D0OTHER", "100.0")))
+
+    def test_other_threads_and_expired_ones_are_left_alone(self):
+        self.plugin.on_event(event(user="U0SAM", ts="210.0", thread_ts="999.0", text="unrelated"))
+        record = self.plugin.get(self.plugin.follow_key("D0OTHER", "100.0"))
+        record["until"] = 1
+        self.plugin.put(self.plugin.follow_key("D0OTHER", "100.0"), record)
+        self.plugin.on_event(event(user="U0SAM", ts="211.0", thread_ts="100.0", text="still there?"))
+        self.assertEqual(self.queued(), [])
+
+    def test_it_stops_after_too_many_answers_in_a_row(self):
+        record = self.plugin.get(self.plugin.follow_key("D0OTHER", "100.0"))
+        record["auto"] = sa.MAX_AUTO_REPLIES
+        self.plugin.put(self.plugin.follow_key("D0OTHER", "100.0"), record)
+        self.plugin.on_event(event(user="U0SAM", ts="210.0", thread_ts="100.0", text="and?"))
+        self.assertEqual(self.queued(), [])
+
+    def test_the_bots_own_dm_is_never_followed(self):
+        self.plugin.follow(sa.Mention(BOT_DM, "300.0", "300.0", "hi"), auto=False)
+        self.assertIsNone(self.plugin.get(self.plugin.follow_key(BOT_DM, "300.0")))
+
+    def test_a_follow_up_can_decline_to_answer(self):
+        self.slack.user_web.thread = [
+            {"ts": "100.0", "user": "U0SAM", "text": "he can't sign in"},
+            {"ts": "200.0", "user": OWNER, "text": "@dot check"},
+            {"ts": "201.0", "user": OWNER, "text": "his account is fine"},
+            {"ts": "210.0", "user": "U0SAM", "text": "thank you!"},
+        ]
+        self.plugin.remember_mine("D0OTHER", "201.0")
+        job = self.hub.store.enqueue("slack_ask", "follow-up", {"channel": "D0OTHER", "ts": "210.0", "thread_ts": "100.0",
+                                                                "text": "", "as_user": True, "auto": True})
+        ctx = FakeCtx([agent.AgentResult("claude", "NO_REPLY", session="claude:s1")])
+        outcome = self.plugin.handle(job, ctx)
+        self.assertEqual(outcome.summary, "nothing in the new replies needed an answer")
+        self.assertEqual(self.slack.user_web.posts, [])
+        self.assertIn("thank you!", ctx.tasks[0].prompt)
+        self.assertIn("NO_REPLY", ctx.tasks[0].prompt)
+
 class Sessions(unittest.TestCase):
     def test_migration_tags_old_sessions_once(self):
         with tempfile.TemporaryDirectory() as root:

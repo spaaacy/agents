@@ -1,6 +1,6 @@
 # Agents hub
 
-One background process on this Mac runs every unattended agent: it answers Aakif in Slack (`slack_ask`), investigates Datadog pages while he is on call (`on_call`), and reviews the PRs he is tagged on in #devs (`pr_review`). It has one job queue, one Slack connection, one switch between Codex and Claude, a local dashboard, and control commands in Slack. It replaces the three separate services (slack-claude, on-call-runner, slack-pr-review) that were built one at a time.
+One background process on this Mac runs every unattended agent: it answers Aakif in Slack (`slack_ask`; once it answers in a thread with other people it keeps answering their replies there until he writes in it himself), investigates Datadog pages while he is on call (`on_call`), and reviews the PRs he is tagged on in #devs (`pr_review`). It has one job queue, one Slack connection, one switch between Codex and Claude, a local dashboard, and control commands in Slack. It replaces the three separate services (slack-claude, on-call-runner, slack-pr-review) that were built one at a time.
 
 ## How it fits together
 
