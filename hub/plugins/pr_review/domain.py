@@ -249,8 +249,13 @@ def database(path: Path) -> sqlite3.Connection:
     if "reviewer" not in {row["name"] for row in db.execute("PRAGMA table_info(jobs)")}:
         db.execute("ALTER TABLE jobs ADD COLUMN reviewer TEXT")
     # Where a request came from: NULL for a #devs tag, 'dm' for the owner's `!review` in the bot's DM.
-    if "source" not in {row["name"] for row in db.execute("PRAGMA table_info(requests)")}:
+    columns = {row["name"] for row in db.execute("PRAGMA table_info(requests)")}
+    if "source" not in columns:
         db.execute("ALTER TABLE requests ADD COLUMN source TEXT")
+    # The Slack thread a `!review` came from, so its draft and outcome answer under it.
+    for column in ("reply_channel", "reply_ts"):
+        if column not in columns:
+            db.execute(f"ALTER TABLE requests ADD COLUMN {column} TEXT")
     return db
 
 

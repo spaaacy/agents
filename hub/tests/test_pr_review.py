@@ -702,8 +702,8 @@ class DirectReview(DraftButtons):
 
     def test_a_link_queues_one_direct_review_and_says_where_the_draft_goes(self):
         reply = self.plugin.cmd_review([f'<{A}>', 'backend#2909'])
-        self.assertIn('reviewing envoyai-backend#2909', reply)
-        self.assertIn('Post and Skip', reply)
+        self.assertTrue(reply.startswith('on it: envoyai-backend#2909 on codex'), reply)
+        self.assertIn('the draft comes back here', reply)
         self.assertEqual([(r['repo'], r['number'], r['source']) for r in self.dm_rows()],
                          [('envoy-ai/envoyai-backend', 2909, 'dm')], 'the same PR twice is one review')
         job = self.direct_job()
@@ -711,7 +711,7 @@ class DirectReview(DraftButtons):
 
     def test_the_control_command_reaches_it(self):
         from hub.core import controls
-        self.assertIn('reviewing envoyai-web#853', controls.run_command(self.hub, ['review', B]))
+        self.assertIn('on it: envoyai-web#853', controls.run_command(self.hub, ['review', B]))
         self.assertIn('!review', controls.HELP)
 
     def test_unreadable_words_queue_nothing(self):
@@ -750,7 +750,46 @@ class DirectReview(DraftButtons):
         outcome, _, _ = self.run_handle(self.direct_job(), [agent.AgentResult('codex', error='boom')])
         self.assertEqual(outcome.status, 'failed')
         (line,) = self.hub.slack.posts
-        self.assertIn('the review failed', line['text'])
+        self.assertIn('review failed: codex produced no completed review: boom', line['text'])
+
+    def in_thread(self, words):
+        from hub.core import controls
+        token = controls.COMMAND_THREAD.set({'channel': 'D1', 'thread_ts': '500.1'})
+        try:
+            return self.plugin.cmd_review(words)
+        finally:
+            controls.COMMAND_THREAD.reset(token)
+
+    def test_from_slack_the_draft_lands_under_the_review_message(self):
+        self.in_thread([A])
+        self.reviewed()
+        buttons, draft = self.hub.slack.posts
+        self.assertEqual((buttons['channel'], buttons['thread_ts']), ('D1', '500.1'))
+        self.assertEqual(buttons['text'], "draft's ready, posting is off. it's below")
+        self.assertEqual(draft['thread_ts'], '500.1')
+        self.assertIn('Looks good, two nits.', draft['text'])
+
+    def test_from_slack_the_outcome_is_one_short_line_in_the_thread(self):
+        self.in_thread([A])
+
+        async def posted(cfg, db, job, approved=False):
+            domain.update_job(db, job['key'], 'posted', review_url=A + '#pullrequestreview-1')
+
+        first = agent.AgentResult('codex', text='the review', session='codex:s1')
+        long_body = dict(DRAFT, body='Ready once the ticket and the code agree on two points; ' * 10)
+        second = agent.AgentResult('codex', text='x', session='codex:s1', structured=long_body)
+        self.run_handle(self.direct_job(), [first, second], publish=posted)
+        (line,) = self.hub.slack.posts
+        self.assertEqual((line['channel'], line['thread_ts']), ('D1', '500.1'))
+        self.assertEqual(line['text'], f'posted, <{A}#pullrequestreview-1|see it on GitHub>')
+
+    def test_brief_never_carries_the_review(self):
+        from hub.core.store import JobResult
+        failed = JobResult('failed', error='codex produced no completed review: boom\ntraceback...')
+        self.assertEqual(pr_plugin.brief(failed), 'review failed: codex produced no completed review: boom')
+        moved = JobResult('done', summary='not posted, the PR changed...: long review text', link=A,
+                          extra={'review_status': 'superseded'})
+        self.assertNotIn('long review text', pr_plugin.brief(moved))
 
     def test_a_devs_tag_while_off_is_still_cancelled_quietly(self):
         job = self.job()  # the #devs tag from setUp

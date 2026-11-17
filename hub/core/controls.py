@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 import shlex
 import time
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
 from . import agent, engine
@@ -39,6 +40,14 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("hub.controls")
 HELP = "\n".join(line.strip() for line in (__doc__ or "").splitlines() if line.startswith("  !"))
+
+# The Slack thread the command being run came from ({"channel", "thread_ts"}); None from the dashboard, the
+# CLI or the MCP server. A plugin command that answers later (a review) reads it to answer in that thread.
+COMMAND_THREAD: ContextVar[dict[str, str] | None] = ContextVar("command_thread", default=None)
+
+
+def command_thread() -> dict[str, str] | None:
+    return COMMAND_THREAD.get()
 
 
 def ago(at: float | None) -> str:
@@ -192,9 +201,12 @@ class SlackControls:
             words = shlex.split(text)
         except ValueError:
             words = text.split()
+        token = COMMAND_THREAD.set({"channel": event["channel"], "thread_ts": event.get("thread_ts") or event.get("ts")})
         try:
             reply = run_command(self.hub, words)
         except Exception as exc:  # noqa: BLE001
             log.exception("control command failed")
             reply = f"that failed: {type(exc).__name__}: {exc}"
+        finally:
+            COMMAND_THREAD.reset(token)
         self.hub.slack.post(event["channel"], reply, event.get("thread_ts") or event.get("ts"))

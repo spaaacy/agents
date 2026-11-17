@@ -6,7 +6,8 @@ review of the PR's exact head in its own checkout, two agent turns (the review
 skill, then post-review's draft as structured output) on the reviews setting
 (engine, model and effort of its own: `!model reviews astra`), the draft checks, and a GitHub COMMENT review when posting is on.
 The owner can also ask straight from the bot's DM: `!review <PR link or backend#3134> ...` queues the same
-job for each PR, runs even while the #devs pickup is off, and DMs the outcome when no draft comes back.
+job for each PR, runs even while the #devs pickup is off, and answers in that message's thread: the draft
+with Post and Skip, or one line (posted, already reviewed, failed).
 Everything the checks and the publisher rely on is in domain.py.
 
 The review queue keeps its own SQLite file (settings, requests, reviewed
@@ -26,7 +27,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from ...core import agent, engine
+from ...core import agent, controls, engine
 from ...core.plugin import Check, JobContext, Plugin
 from ...core.store import Job, JobResult
 from . import domain
@@ -47,6 +48,25 @@ def resume_command(checkout: Path | None, session: str | None) -> str | None:
         return None
     name, sid = agent.split_session(session)
     return f"cd {checkout} && codex resume {sid}" if name == "codex" else f"cd {checkout} && claude --resume {sid}"
+
+
+def reply_target(row: sqlite3.Row) -> dict[str, str] | None:
+    """The Slack thread a `!review` came from, or None (a #devs tag, or a `!review` from outside Slack)."""
+    if row["source"] != "dm" or not row["reply_channel"]:
+        return None
+    return {"channel": row["reply_channel"], "thread_ts": row["reply_ts"]}
+
+
+def brief(outcome: JobResult) -> str:
+    """A review's outcome in one short line, never the review itself."""
+    if outcome.status == "failed":
+        error = (outcome.error or "no reason given").strip().splitlines()[0][:200]
+        line = f"review failed: {error}"
+    else:
+        status = (outcome.extra or {}).get("review_status")
+        line = {"posted": "posted", "superseded": "the PR changed during the review, so nothing got posted"}.get(
+            status, outcome.summary or "done")
+    return f"{line}, <{outcome.link}|see it on GitHub>" if outcome.link and outcome.status != "failed" else line
 
 
 class CliContext:
@@ -183,7 +203,7 @@ class PrReview(Plugin):
         return self.enqueue(f"{repo}#{number}", {
             "request_id": row["id"], "message_ts": row["message_ts"], "repo": repo, "number": number,
             "url": f"https://github.com/{repo}/pull/{number}", "channel": cfg["channel_id"],
-            "direct": row["source"] == "dm",
+            "direct": row["source"] == "dm", "reply": reply_target(row),
         }, dedupe=f"{row['message_ts']}:{repo}:{number}")
 
     # ------------------------------------------------------------------ asked for in the DM: !review
@@ -207,38 +227,44 @@ class PrReview(Plugin):
         if unread:
             return (f"couldn't read {', '.join(unread)} as one of {cfg['owner']}'s PRs: "
                     "give the PR link or `repo#number` (backend#3134)")
+        thread = controls.command_thread() or {}
         db = self.db()
         try:
             names = []
             for repo, number in found:
                 with db:
-                    cursor = db.execute("INSERT INTO requests(message_ts,repo,number,source) VALUES (?,?,?,'dm')",
-                                        (f"{time.time():.6f}", repo, number))
+                    cursor = db.execute(
+                        "INSERT INTO requests(message_ts,repo,number,source,reply_channel,reply_ts) "
+                        "VALUES (?,?,?,'dm',?,?)",
+                        (f"{time.time():.6f}", repo, number, thread.get("channel"), thread.get("thread_ts")))
                 row = db.execute("SELECT * FROM requests WHERE id=?", (cursor.lastrowid,)).fetchone()
-                job = self.enqueue_request(row, cfg)
-                names.append(f"{repo.split('/', 1)[-1]}#{number}" + (f" (`{job.id}`)" if job else ""))
+                self.enqueue_request(row, cfg)
+                names.append(f"{repo.split('/', 1)[-1]}#{number}")
             posting = (domain.setting(db, "enabled_at") and domain.setting(db, "mode") == "post"
                        and domain.setting(db, "posting_authorized_at"))
         finally:
             db.close()
-        then = ("it posts on GitHub when it's done, since posting is on" if posting
-                else "the draft comes back here with Post and Skip")
-        return f"reviewing {', '.join(names)} on {engine.describe(engine.current(scope='reviews'))}; {then}"
+        then = "posts to GitHub when it's done" if posting else "the draft comes back here"
+        return f"on it: {', '.join(names)} on {engine.describe(engine.current(scope='reviews'))}, {then}"
 
     def tell_owner(self, job: Job, outcome: JobResult) -> None:
-        """A `!review` that ends without a draft DM (already reviewed, closed, posted, failed) still answers."""
+        """One line under the `!review` when no draft came back to decide on: posted, already reviewed, failed."""
         if outcome.status == "cancelled" or (outcome.extra or {}).get("review_status") == "drafted":
             return
         slack = self.hub.slack
         if slack is None:
             return
-        line = f"{job.title}: {outcome.summary or f'the review failed: {outcome.error}'}"
-        if outcome.link and outcome.link not in line:
-            line += f"\n{outcome.link}"
+        reply = job.payload.get("reply") or {}
+        line = brief(outcome)
+        if not reply.get("thread_ts"):
+            line = f"{job.title}: {line}"  # a top-level DM has no `!review` above it to say which PR
         try:
-            slack.dm_owner(line)
+            if reply.get("channel"):
+                slack.post(reply["channel"], line, reply.get("thread_ts"))
+            else:
+                slack.dm_owner(line)
         except Exception:  # noqa: BLE001 - the dashboard has the outcome either way
-            self.log.warning("could not DM the review outcome", exc_info=True)
+            self.log.warning("could not send the review outcome", exc_info=True)
 
     # ------------------------------------------------------------------ one review
 
@@ -348,7 +374,7 @@ class PrReview(Plugin):
                 ctx.note("posting, if posting is on")
                 await domain.publish(cfg, db, db.execute("SELECT * FROM jobs WHERE key=?", (key,)).fetchone())
                 if db.execute("SELECT status FROM jobs WHERE key=?", (key,)).fetchone()["status"] == "drafted":
-                    self.offer_draft(pr, key, directory)  # posting isn't on: ask with buttons instead
+                    self.offer_draft(pr, key, directory, reply_target(request))  # posting isn't on: ask with buttons
             with db:
                 db.execute("UPDATE requests SET status='done' WHERE id=?", (request["id"],))
             LOG.info("Review ready: %s", directory / "draft.md")
@@ -391,17 +417,20 @@ class PrReview(Plugin):
 
     # ------------------------------------------------------------------ approve-to-act: post or skip a draft
 
-    def offer_draft(self, pr: dict[str, Any], key: str, directory: Path) -> str | None:
+    def offer_draft(self, pr: dict[str, Any], key: str, directory: Path, reply: dict[str, Any] | None = None) -> str | None:
         """DM the owner a drafted review with "Post this review" and "Skip"; the draft itself goes in the thread.
 
         Only when posting isn't on (draft mode, or post mode without the standing authorization): the tap
-        authorizes that one review. Returns the DM message's ts, or None when Slack can't be reached.
+        authorizes that one review. A `!review` gets both under its own message (``reply``). Returns the
+        buttons message's ts, or None when Slack can't be reached.
         """
         slack = self.hub.slack
         if slack is None or slack.web is None or not slack.bot_dm:
             return None
         name = f"{pr['base']['repo']['full_name']}#{pr['number']}"
-        text = (f"Review draft for <{pr['html_url']}|{name}> at `{pr['head']['sha'][:12]}`: posting isn't on, "
+        channel, thread = (reply or {}).get("channel") or slack.bot_dm, (reply or {}).get("thread_ts")
+        text = ("draft's ready, posting is off. it's below" if thread else
+                f"Review draft for <{pr['html_url']}|{name}> at `{pr['head']['sha'][:12]}`: posting isn't on, "
                 "so it's waiting on you. The draft is in the thread.")
         buttons = [
             self.offer("post", "Post this review", {"review_key": key, "pr": name, "url": pr["html_url"]},
@@ -409,10 +438,10 @@ class PrReview(Plugin):
             self.offer("skip", "Skip", {"review_key": key, "pr": name, "url": pr["html_url"]}),
         ]
         try:
-            ts = slack.post_markdown(slack.bot_dm, text, blocks=self.hub.actions.blocks(text, buttons))[0]
+            ts = slack.post_markdown(channel, text, thread, blocks=self.hub.actions.blocks(text, buttons))[0]
             draft = directory / "draft.md"
             if draft.exists():
-                slack.post_markdown(slack.bot_dm, draft.read_text(), ts)
+                slack.post_markdown(channel, draft.read_text(), thread or ts)
             return ts
         except Exception:  # noqa: BLE001 - the draft stays on disk and in the dashboard either way
             self.log.warning("could not DM the review draft", exc_info=True)
