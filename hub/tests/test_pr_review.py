@@ -51,6 +51,26 @@ class Matching(unittest.TestCase):
     def test_link_before_mention(self):
         self.assertEqual(self.match(f'{A} <@{USER}>'), [('envoy-ai/envoyai-backend', 2909)])
 
+    def test_one_link_and_its_reviewer_per_line(self):
+        # Myles in #devs, 2026-11-18: each line is "<link> @reviewer". Dot used to hand every link to the
+        # reviewer tagged on the line above, reviewing Stephen's web#987 and skipping both of Aakif's.
+        body = (':large_blue_circle: DAT posting\n'
+                '<https://github.com/envoy-ai/envoyai-backend/pull/3107|github.com/envoy-ai/envoyai-backend/pull/3107>'
+                ' <@U08DGLX8Q1W|Saumil>\n'
+                '<https://github.com/envoy-ai/envoyai-chat-ui/pull/104|github.com/envoy-ai/envoyai-chat-ui/pull/104>'
+                f' <@{USER}|Aakif>\n'
+                '<https://github.com/envoy-ai/envoyai-web/pull/987|github.com/envoy-ai/envoyai-web/pull/987>'
+                ' <@U0BKZETE0QM|Stephen Chan>\n'
+                '<https://github.com/envoy-ai/envoyai-chrome-plugin/pull/330|github.com/envoy-ai/envoyai-chrome-plugin/pull/330>'
+                f' <@{USER}|Aakif>')
+        self.assertEqual(self.match(body), [('envoy-ai/envoyai-chat-ui', 104), ('envoy-ai/envoyai-chrome-plugin', 330)])
+
+    def test_bare_links_under_a_tagged_line_go_to_that_line(self):
+        self.assertEqual(self.match(f'<@{USER}> can you take these\n{A}\n{B}\n<@UOTHER> https://github.com/envoy-ai/x/pull/7'),
+                         [('envoy-ai/envoyai-backend', 2909), ('envoy-ai/envoyai-web', 853)])
+        self.assertEqual(self.match(f'<@UOTHER> {A}\n{B}\n<@{USER}> https://github.com/envoy-ai/x/pull/7'),
+                         [('envoy-ai/x', 7)])
+
     def test_sole_addressee_in_separate_paragraph(self):
         self.assertEqual(self.match(f'hey <@{USER}>\n\nreview please: {A}'), [('envoy-ai/envoyai-backend', 2909)])
 

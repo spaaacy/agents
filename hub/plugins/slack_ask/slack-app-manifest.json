@@ -34,7 +34,7 @@
         },
         "bot_user": {
             "display_name": "Aakif's Dot",
-            "always_online": false
+            "always_online": true
         }
     },
     "oauth_config": {

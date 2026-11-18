@@ -81,33 +81,53 @@ def pr_reference(word: str, owner: str, repos: dict | list = ()) -> tuple[str, i
 
 def assigned_prs(text: str, user: str, owner: str) -> list[tuple[str, int]]:
     """Associate links with their mention group, not every person in a message."""
-    found = set()
+    found: set[tuple[str, int]] = set()
     only_target = {m[1] for m in MENTION.finditer(text)} == {user}
     for paragraph in re.split(r"\n\s*\n", text):
-        tokens = sorted([(m.start(), "mention", m) for m in MENTION.finditer(paragraph)] +
-                        [(m.start(), "pr", m) for m in PR.finditer(paragraph)])
-        people: set[str] = set()
-        linked = False
-        for i, (_, kind, match) in enumerate(tokens):
-            if kind == "mention":
-                if linked:
-                    people = set()
-                    linked = False
-                people.add(match[1])
-                continue
-            assigned = people
-            # A lone link may be followed by its addressee: "<url> @Aakif".
-            if not assigned:
-                following = []
-                for _, next_kind, next_match in tokens[i + 1:]:
-                    if next_kind == "pr":
-                        break
-                    following.append(next_match[1])
-                assigned = set(following)
-            if (user in assigned or only_target) and match[1].lower() == owner.lower():
-                found.add((f"{owner}/{match[2]}", int(match[3])))
-            linked = True
+        lines = paragraph.split("\n")
+        if not any(MENTION.search(line) and PR.search(line) for line in lines):
+            found |= _group_prs(paragraph, user, owner, only_target)
+            continue
+        # A line that holds both a link and a tag is its own assignment, whichever comes first
+        # ("<url> @Saumil" on one line, "<url> @Aakif" on the next must not hand Aakif's tag to
+        # the link below it). A line of bare links goes to whoever the last tagged line named.
+        carry: set[str] = set()
+        for line in lines:
+            found |= _group_prs(line, user, owner, only_target, carry)
+            mentions = {m[1] for m in MENTION.finditer(line)}
+            if mentions:
+                carry = mentions
     return sorted(found)
+
+
+def _group_prs(text: str, user: str, owner: str, only_target: bool,
+               inherited: set[str] | None = None) -> set[tuple[str, int]]:
+    """The owner's PRs in one block of text: each link goes to the tags before it, else the tags right after it."""
+    found = set()
+    tokens = sorted([(m.start(), "mention", m) for m in MENTION.finditer(text)] +
+                    [(m.start(), "pr", m) for m in PR.finditer(text)])
+    people: set[str] = set()
+    linked = False
+    for i, (_, kind, match) in enumerate(tokens):
+        if kind == "mention":
+            if linked:
+                people = set()
+                linked = False
+            people.add(match[1])
+            continue
+        assigned = people
+        # A lone link may be followed by its addressee: "<url> @Aakif".
+        if not assigned:
+            following = []
+            for _, next_kind, next_match in tokens[i + 1:]:
+                if next_kind == "pr":
+                    break
+                following.append(next_match[1])
+            assigned = set(following) or set(inherited or ())
+        if (user in assigned or only_target) and match[1].lower() == owner.lower():
+            found.add((f"{owner}/{match[2]}", int(match[3])))
+        linked = True
+    return found
 
 
 def unwrap(result: dict) -> dict:
