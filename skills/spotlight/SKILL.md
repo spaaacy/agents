@@ -1,6 +1,6 @@
 ---
 name: spotlight
-description: Put the main checkouts on one ticket's PR stack and remove the worktrees in two phases - report first, then act on its own: it removes only worktrees verified clean and pushed, keeps and lists the rest, and asks one thing only, whether to undo another branch's migrations on the local database when they block the backend switch. It always finishes with the local docker stack running, migrated to the switched-to checkout, and the api answering, and, when chat-ui moved or is in the stack, with chat-ui built and linked into web and the extension so its local changes show up. A main checkout that was sitting on another ticket's branch whose PR is still open (the last spotlight) gets that branch back in its own worktree once it moves, so spotlighting the next ticket undoes the previous one. Use for "/spotlight ENG-1234", "spotlight this ticket", "delete all worktrees and check out the stack", or "put the main branches on top of a ticket/PR".
+description: Put the main checkouts on one ticket's PR stack and remove the worktrees in two phases - report first, then act on its own: it removes only worktrees verified clean and pushed, keeps and lists the rest, and asks one thing only, whether to undo another branch's migrations on the local database when they block the backend switch. It always finishes with the local docker stack running, migrated to the switched-to checkout, and the api answering, and, when chat-ui moved or is in the stack, with chat-ui built and linked into web and the extension so its local changes show up. When the backend PR changes voice code, it also deploys the voice worker to the LiveKit Cloud development project, so the change can be tested on real calls the way Envoy signs voice changes off. A main checkout that was sitting on another ticket's branch whose PR is still open (the last spotlight) gets that branch back in its own worktree once it moves, so spotlighting the next ticket undoes the previous one. Use for "/spotlight ENG-1234", "spotlight this ticket", "delete all worktrees and check out the stack", or "put the main branches on top of a ticket/PR".
 ---
 
 Target: `$ARGUMENTS`. A Linear key (`ENG-1234`) or Linear URL; a GitHub PR URL or number also works when its title, branch or body names the ticket. Nothing means the ticket this conversation is about (`Shared skill arguments` in `~/.agents/AGENTS.md`); only when there is none, ask which ticket with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options) and stop.
@@ -13,7 +13,7 @@ Two phases. **Phase 1 always runs first**: read the stack and local state, chang
 - Every linked worktree verified clean and pushed: remove all of them (only this ticket's when the request said `only` or to keep other tickets' work).
 - Some worktree dirty, unpushed, without an upstream, or unreadable: remove this ticket's clean, pushed worktrees only (every clean, pushed one when the request said `all`). Keep the flagged ones and list them in the report. A flagged tree is removed only when the request names its path or branch, after a report that showed its warning.
 - None of this ticket's worktrees is clean and pushed, and the request did not say `all`: remove nothing, move nothing, and stop after the report, saying what has to be committed or pushed first.
-Then move the main checkouts, put the previous spotlight back in worktrees (phase 2 step 3), and leave the local stack up to date and running. A request to "delete all worktrees" still gets the inventory first. Say what you did not check.
+Then move the main checkouts, put the previous spotlight back in worktrees (phase 2 step 3), leave the local stack up to date and running, and deploy a voice change to LiveKit Cloud (phase 2 step 5). A request to "delete all worktrees" still gets the inventory first. Say what you did not check.
 
 # Phase 1: inspect
 
@@ -65,6 +65,11 @@ Docker or postgres that would not come up, or a read that fails, is **local data
 
 **A stamp not in the target's chain** is another branch's migration (usually the branch the backend checkout is on now). Find what undoing it takes: from the stamp, read its revision file's `down_revision` in `$B/alembic/versions/` (the current checkout holds it), and repeat until you reach a revision the target has (`git -C $B grep -l "<revision>" <target-sha> -- alembic/versions`). The revisions walked past are the ones to undo; the one reached is where the database would land. For each, read its `downgrade()` and note what it drops (columns, tables, enum types, rows). It can be undone here only when the current checkout holds every one of those files, none is a merge revision (a tuple `down_revision`), and every `downgrade()` really reverses its upgrade (not `pass`, not a raise). Otherwise it cannot, and the backend stays where it is.
 
+**Voice changes.** Envoy's rule (Myles's guide, "Voice agent engineering and Cloud testing", https://app.notion.com/p/41b2925b73f7815585d6ea41e9e54e57, section 7) is that a voice change is signed off on calls served by a worker deployed to LiveKit Cloud, never one running on the laptop. So when the backend target carries voice changes, phase 2 deploys it to the development project. A voice change is a file the target changes since it left `development` (`git -C $B diff --name-only $(git -C $B merge-base origin/development <target-sha>) <target-sha>`) under `envoy/comms/voice/`, or `Dockerfile`, `scripts/docker/livekit.entrypoint.sh`, or a `livekit` package line in `pyproject.toml` or `poetry.lock`. A target of `development` has none. When there are some, also read:
+- Which agents they touch: `envoy/comms/voice/ai/agents/booking/` is the native agent, `agents/load_booking/` the legacy one, `agents/elp/` ELP; anything else under the worker is shared by all of them.
+- The project and tunnel the deploy would use, through its own loader so `secrets/local.json` counts: `( cd $B && poetry run python -c "from constants import Environment; from scripts.secrets.secret_loader import SecretsLoader as L; s = L(Environment.DEVELOPMENT, force=True).load_ejson_secrets(); print(s['VOICE']['LIVEKIT_URL'], s.get('API_URL', ''))" )` (two URLs, no secret).
+- `$B/livekit.toml`'s `[project] subdomain` and whether it has an `[agent] id`. The deploy goes ahead only when that subdomain is the LIVEKIT_URL's host, so the build lands in the project those credentials open.
+
 ## 4. Report
 
 Answer first: `<KEY> — <n> linked worktrees, <n> this ticket's; <repo> targets <branch> (#<pr>), ...`. One line per worktree and one per main checkout, plus changed-file details where needed:
@@ -82,6 +87,8 @@ Back to a worktree
 Local database
   stamp <revision> | in the target's chain | not in the target's chain: undo <revisions> → lands on <revision>; drops <what> | cannot be undone here: <why> | not read: <why>
   api: healthy | refusing to boot: <the log line> | not running
+Voice
+  <n> voice files in the backend stack (<native | legacy | ELP | shared>) → deploys to LiveKit Cloud <subdomain> after the switch | won't deploy: <why> | no voice changes
 Not checked: <unread repos, dependencies, other omissions>
 ```
 
@@ -137,7 +144,18 @@ Then, when chat-ui's checkout moved or the stack has a chat-ui PR, follow `chat-
 
 Last, build the extension from its main checkout, every run, after the chat-ui link so the build carries the linked chat-ui: `npm --prefix <absolute plugin path> run build:development`. That leaves an unpacked development build in `<plugin>/.output/chrome-mv3-dev` to load in Chrome, so the user can test the spotlighted extension without starting a dev server. Skip it, and say why, when the plugin's checkout was refused or left unresolved, when `node_modules` is missing, or when its `package-lock.json` changed (then `npm ci` comes first, and a rerun of `/spotlight` relinks chat-ui and builds). A failed build is reported with its last error lines, never fixed here. Web is never built or run.
 
-## 5. Final report
+## 5. Voice changes: deploy the worker to LiveKit Cloud
+
+Only when phase 1 found voice changes, and only once the backend checkout is on the target (moved there or already on it). A backend that was refused or left in place gets no deploy, since the upload would carry the wrong branch; say so.
+
+1. Re-read that `$B` is at the target SHA with no tracked changes. The deploy uploads the working directory, so untracked files git does not ignore ride along: name them in the report (the `??` lines of `git -C $B status --porcelain`).
+2. Skip, and say why, when `lk` is not on the path, `$B/livekit.toml` is missing or has no `[agent] id` (a first deploy needs `lk agent create` run once by hand; the wrapper's own first-deploy branch fails on lk v2), or its subdomain is not the development LIVEKIT_URL's host.
+3. Two workers on one project split the calls between them, and the local voice worker uses the same project: when `docker compose --project-directory $B ps livekit-worker --format '{{.State}}'` reads `running`, `docker compose --project-directory $B stop livekit-worker`.
+4. The Cloud worker reaches the local api through API_URL: ngrok on its host forwards to the checkout's caddy proxy on 8080 (`dev_caddy.json`: `/api` to the api on 8000, the rest to the web dev server). `curl -s -o /dev/null -w '%{http_code}' --max-time 10 https://<API_URL host>/api/health` must read 200. When it does not, start whichever is missing, in the background from `$B`: `nohup caddy run --config dev_caddy.json > ~/.agents/state/caddy.log 2>&1 &` when nothing listens on 8080 (`lsof -nP -iTCP:8080 -sTCP:LISTEN`), `nohup ngrok http 8080 --domain=<API_URL host> > ~/.agents/state/ngrok.log 2>&1 &` when `pgrep -x ngrok` finds none; then check again for up to 30 seconds. Still not 200: deploy anyway and report the tunnel down, since every call fails at the worker's first callback until it answers.
+5. Deploy: `( cd $B && poetry run poe lk-deploy --environment development )`. Development only, ever: never `staging` or `production`, and never to get around a development failure (quota, build). It builds in Cloud and takes several minutes, so run it in the background and wait for it. It also pushes the worker's settings to the project, merged (nothing is removed). A failure reports its last error lines and stops there; never retry with other settings.
+6. Confirm with `( cd $B && poetry run poe lk-status --environment development )`: the row's Deployed At is from this run and its Status reads Running. A deploy rolls, so a call already in progress can finish on the old version. Never run `poe lk-logs` here; it streams for an hour.
+
+## 6. Final report
 
 Answer first: `<KEY> — removed <n> worktrees; moved <n> main checkouts; <n> back in worktrees; <n> refused.` Then one line per repo, including refused repos at their actual final position:
 
@@ -150,8 +168,9 @@ Branches deleted: <names, or none; kept by default>
 <the local-stack.md report line>
 <the chat-ui-link.md report line, when it ran>
 extension build: built at <sha> (reload it in chrome://extensions) | skipped: <why> | failed: <last error line>
+voice: deployed <sha> to LiveKit Cloud <subdomain>, Running; call the <native agent (VOICE_BOOKING_AGENT on for the test org) | legacy agent (flag off) | both, one at a time, checking each call's saved agent family>; tunnel <answering | down>; checklist: the guide's "Calls to test before signing off" | skipped: <why> | failed: <last error line> | no voice changes
 Refused / kept: <paths or repos and reasons>
 Not checked: <dependencies, unavailable reads>
 ```
 
-Stop there. Never touch Linear, push, merge, create or edit PRs, repair failing checks, or clean up databases beyond what `local-stack.md` does. This skill changes local checkouts, the removed worktrees, the previous spotlight's restored worktrees, the local docker stack through `local-stack.md`, the chat-ui links through `chat-ui-link.md`, and the extension's development build, nothing else.
+Stop there. Never touch Linear, push, merge, create or edit PRs, repair failing checks, or clean up databases beyond what `local-stack.md` does. This skill changes local checkouts, the removed worktrees, the previous spotlight's restored worktrees, the local docker stack through `local-stack.md`, the chat-ui links through `chat-ui-link.md`, the extension's development build, and, for a voice change, the voice worker on the LiveKit Cloud development project (plus the local voice worker it stops and the tunnel it starts), nothing else.
