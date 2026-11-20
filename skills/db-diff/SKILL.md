@@ -1,11 +1,11 @@
 ---
 name: db-diff
-description: Show what a branch, pull request, ticket or plan changes in the database against development, and why - every new or dropped table and column, what each holds, what writes and reads it, whether it could have been worked out from data already stored or kept somewhere that already exists, and whether Aakif approved it - then ask him to approve the ones he has not. With no target it covers everything in flight (the backend main checkout, every backend worktree, his open backend PRs). Read-only on code, GitHub and Linear. Use when the user asks what database or schema changes a branch, PR or ticket makes or would make, for the DB diff against development, or why a table or column is being added.
+description: Show what a branch, pull request, ticket or plan changes in the database against development, and why - every new or dropped table and column, what each holds, what writes and reads it, whether it could have been worked out from data already stored or kept somewhere that already exists, and whether Aakif approved it - as a short report. `approve` asks him to sign off on what is not approved. With no target it covers everything in flight (the backend main checkout, every backend worktree, his open backend PRs). Read-only on code, GitHub and Linear. Use when the user asks what database or schema changes a branch, PR or ticket makes or would make, for the DB diff against development, or why a table or column is being added.
 ---
 
-Target: $ARGUMENTS. A backend PR number or URL; a Linear key (its backend PRs and the worktrees on its branches); a branch name; a worktree path; `plan` (the data changes a plan in this conversation proposes, such as `/pickup` step 1's, before any code exists); nothing means everything in flight: `~/dev/envoyai-backend`, every worktree in `git -C ~/dev/envoyai-backend worktree list`, and Aakif's open backend PRs (`gh pr list -R envoy-ai/envoyai-backend --author @me --state open`). A trailing `page` publishes the report as a page too.
+Target: $ARGUMENTS. A backend PR number or URL; a Linear key (its backend PRs and the worktrees on its branches); a branch name; a worktree path; `plan` (the data changes a plan in this conversation proposes, such as `/pickup` step 1's, before any code exists); nothing means everything in flight: `~/dev/envoyai-backend`, every worktree in `git -C ~/dev/envoyai-backend worktree list`, and Aakif's open backend PRs (`gh pr list -R envoy-ai/envoyai-backend --author @me --state open`). A trailing `page` publishes the report as a page too; a trailing `approve` (or him saying approve after a report) asks for sign-off on what is not approved.
 
-Flow: read-only. It never writes code, never edits an approval (`~/.agents/state/schema-approvals/` is written only by `~/.agents/hooks/schema-guard.py`, from Aakif's own answer), and its only question is the approval at the end. The rule it serves is in `Working style` in `~/.agents/AGENTS.md`: a new or dropped table or column is his call, the same as a product change.
+Flow: read-only. It never writes code, never edits an approval (`~/.agents/state/schema-approvals/` is written only by `~/.agents/hooks/schema-guard.py`, from Aakif's own answer), and it asks nothing unless he says approve. The rule it serves is in `Working style` in `~/.agents/AGENTS.md`: a new or dropped table or column is his call, the same as a product change.
 
 Only the backend has a database; the other repos are left out.
 
@@ -39,27 +39,27 @@ Mark anything inferred rather than read "(inferred)".
 
 ## Report, in chat
 
-First line: what is in flight, e.g. "3 branches change the database: 9 changes, 6 not approved" or "no database changes in flight".
+Short. The research above is for getting the verdicts right, not for printing: no file paths, no line numbers, no ticket recap.
 
-Then per branch, most unapproved changes first:
+First line: e.g. "3 branches change the database: 13 changes, none approved" or "no database changes in flight".
 
-- A header line: the branch, its PR and ticket when there are any, and how far it is behind development.
-- The diagram in one code block, in the format of `diagram.md` in this folder, `branch:` line first, so it can go straight into an approval question.
-- One bullet per change: `<change>: <what it holds>. why: <the reason, with the ticket>. writes <file:line>, reads <file:line>. <needed: ... | derivable: how | belongs in <place>>. <approved <date> | not approved>.`
+Then per branch, most unapproved first:
 
-End with one line of what was not checked. No length cap beyond one line per bullet: Aakif asked for every change.
+- One header line: branch, PR, approved or not.
+- The diagram in one code block, in the format of `diagram.md` in this folder, `branch:` line first.
+- One bullet per changed table or column, under about 15 words: what it's for, then the verdict word (`needed`, `derivable: <how>`, `belongs in <place>`, or `cosmetic`). A new table is one bullet; a column inside it gets its own bullet only when it looks derivable. Two branches with the same changes share one block ("same as above").
+
+Nothing else: no "not checked" line unless something that matters couldn't be read, and no question or offer at the end.
 
 With `page`: also publish the report as an Artifact page (load the `artifact-design` skill first), one card per table in the style of `/impact`'s database section (`~/.agents/skills/impact/SKILL.md`), plus each change's why, written to the scratchpad as `db-diff.html` so a rerun updates the same page.
 
-## Ask for what is not approved
+## Approve (only when asked)
 
-When this conversation is with Aakif and anything is not approved, ask in one call of the client's structured question tool (Claude Code: `AskUserQuestion`), one question per branch (up to the tool's limit; the rest are asked next):
+Only with a trailing `approve`, or when Aakif says approve after a report. Ask in one call of the client's structured question tool (Claude Code: `AskUserQuestion`), one question per branch (up to the tool's limit; the rest are asked next):
 
 - header `Schema` (the hook only records answers to questions with this header);
-- the question names the branch and says, per change, why it is needed in one short clause, plus the avoidable ones' alternative;
-- an option labelled `Approve`, its preview the branch's diagram from the report with only the changes being asked about (the hook records exactly what that diagram lists, for its `branch:`);
-- an option that does not add them (`Don't add`, saying what happens instead: derive it, or keep it in the existing place).
+- the question names the branch and says in one short sentence what the changes are for;
+- an option labelled `Approve`, its preview the branch's diagram with only the changes being asked about (the hook records exactly what that diagram lists, for its `branch:`); a second `Approve, ...` option with a smaller diagram when one change is worth leaving out;
+- an option that does not add them (`Don't add`).
 
-Recommend `Don't add` first when a change is derivable or belongs in an existing place; otherwise `Approve` first. The hook confirms what it recorded right after the answer; repeat that line in the reply. In a client with no structured question tool, ask in chat: he approves by replying "approve schema", which approves what the hook last blocked, so ask that way only for a branch the hook just stopped.
-
-With nobody to ask (a Slack bot, a background run), end with the report.
+Recommend `Don't add` first when a change is derivable or belongs in an existing place; otherwise `Approve` first. Repeat the line the hook prints after the answer. In a client with no structured question tool, ask in chat: he approves by replying "approve schema", which approves what the hook last blocked, so ask that way only for a branch the hook just stopped.
