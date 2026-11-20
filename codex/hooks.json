@@ -19,6 +19,15 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.agents/hooks/schema-guard.py --prompt",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -28,6 +37,15 @@
             "type": "command",
             "command": "~/.agents/hooks/docker-guard.py",
             "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.agents/hooks/schema-guard.py",
+            "timeout": 20
           }
         ]
       }
