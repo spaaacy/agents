@@ -26,6 +26,7 @@ class CodexConfigTests(unittest.TestCase):
         self.assertEqual(tomllib.loads(merged), {
             "project_doc_fallback_filenames": ["CLAUDE.md"],
             "project_doc_max_bytes": 131072,
+            "features": {"default_mode_request_user_input": True},
             "sandbox_workspace_write": {"writable_roots": [config.WORKTREES], "network_access": True},
         })
         self.assertEqual(config.merge(merged), merged)
@@ -75,7 +76,7 @@ example = "preserve"
 '''
         merged = config.merge(original)
         parsed = tomllib.loads(merged)
-        self.assertEqual(parsed["features"], {"js_repl": False})
+        self.assertEqual(parsed["features"], {"js_repl": False, "default_mode_request_user_input": True})
         for key in ("model", "mcp_servers", "hooks"):
             self.assertEqual(parsed[key], tomllib.loads(original)[key])
         self.assertIn('js_repl = false # unrelated setting', merged)
@@ -99,6 +100,7 @@ project_doc_fallback_filenames = ["OTHER.md"]
         original = f'''project_doc_fallback_filenames = ["CLAUDE.md"]
 project_doc_max_bytes = 262144
 [features]
+default_mode_request_user_input = true
 hooks = true
 [sandbox_workspace_write]
 writable_roots = ["{config.WORKTREES}"]

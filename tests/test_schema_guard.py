@@ -184,6 +184,8 @@ class Repo(unittest.TestCase):
         self.assertTrue(guard.writes_approvals("python3 -c 'open(\"schema-approvals/x\",\"w\")'"))
         self.assertFalse(guard.writes_approvals("cat ~/.agents/state/schema-approvals/envoyai-backend/x.json"))
         self.assertFalse(guard.writes_approvals("ls ~/.agents/state/schema-approvals"))
+        self.assertFalse(guard.writes_approvals("cat ~/.agents/state/schema-approvals/p.json 2>/dev/null"))
+        self.assertTrue(guard.writes_approvals("cat x >~/.agents/state/schema-approvals/p.json"))
 
     def test_his_answer_is_recorded_from_the_question(self):
         question = "Approve the schema changes on aakif/eng-1-thing?"
@@ -212,6 +214,31 @@ class Repo(unittest.TestCase):
             guard.record_question(event)
         self.assertEqual(guard.approved("envoyai-backend", "b"), {"add column offer.x"})
 
+    def test_codex_question_tool_answer_is_recorded(self):
+        diagram = "branch: aakif/eng-1-thing\noffer  (existing table, +1 column)\n  + held_at   timestamptz   optional\n"
+        event = {"tool_name": "request_user_input", "session_id": "c", "tool_input": {"questions": [{
+            "id": "schema_eng_1", "header": "Schema", "question": "Approve the change on aakif/eng-1-thing?\n\n" + diagram,
+            "options": [{"label": "Approve (Recommended)", "description": "Adds the column."},
+                        {"label": "Don't add", "description": "Leaves it out."}]}]},
+            "tool_response": json.dumps({"answers": {"schema_eng_1": {"answers": ["Approve (Recommended)"]}}})}
+        with mock.patch("sys.stdout"):
+            guard.record_question(event)
+        self.assertEqual(guard.approved("envoyai-backend", "aakif/eng-1-thing"), {"add column offer.held_at"})
+
+    def test_an_answer_it_cannot_read_is_kept(self):
+        event = {"tool_name": "request_user_input", "tool_input": {"questions": [
+            {"id": "s", "header": "Schema", "question": "q", "options": [{"label": "Approve"}]}]},
+            "tool_response": "something new"}
+        with mock.patch("sys.stdout"):
+            guard.record_question(event)
+        self.assertTrue((guard.STATE / "unread-answers.jsonl").exists())
+
+    def test_the_block_asks_for_the_question_tool_not_a_typed_phrase(self):
+        reason = self.pre({"tool_name": "Write", "tool_input": {"file_path": str(self.migration), "content": ADD_COLUMN}})
+        self.assertIn("AskUserQuestion", reason)
+        self.assertIn("request_user_input", reason)
+        self.assertNotIn('replying "approve schema"', reason)
+
     def test_typed_approval_takes_the_pending_request(self):
         self.pre({"tool_name": "Write", "tool_input": {"file_path": str(self.migration), "content": ADD_COLUMN}})
         with mock.patch("sys.stdout"):
@@ -233,7 +260,7 @@ class Wiring(unittest.TestCase):
             self.assertIn(want, commands)
         codex = json.loads((ROOT / "codex/hooks.json").read_text())["hooks"]
         codex_cmds = {h["command"] for es in codex.values() for e in es for h in e["hooks"]}
-        self.assertTrue({g, f"{g} --prompt"} <= codex_cmds)
+        self.assertTrue({g, f"{g} --prompt", f"{g} --record"} <= codex_cmds)
 
 
 if __name__ == "__main__":

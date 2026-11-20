@@ -55,11 +55,11 @@ With `page`: also publish the report as an Artifact page (load the `artifact-des
 
 ## Approve (only when asked)
 
-Only with a trailing `approve`, or when Aakif says approve after a report. Ask in one call of the client's structured question tool (Claude Code: `AskUserQuestion`), one question per branch (up to the tool's limit; the rest are asked next):
+Only with a trailing `approve`, or when Aakif says approve after a report. Ask in one call of the client's structured question tool (Claude Code: `AskUserQuestion`; Codex: `request_user_input`), one question per branch (up to the tool's limit; the rest are asked next):
 
 - header `Schema` (the hook only records answers to questions with this header);
 - the question names the branch and says in one short sentence what the changes are for;
-- an option labelled `Approve`, its preview the branch's diagram with only the changes being asked about (the hook records exactly what that diagram lists, for its `branch:`); a second `Approve, ...` option with a smaller diagram when one change is worth leaving out;
+- an option labelled `Approve`, its preview the branch's diagram with only the changes being asked about (in Codex, whose options have no preview, the diagram goes at the end of the question text) (the hook records exactly what that diagram lists, for its `branch:`); a second `Approve, ...` option with a smaller diagram when one change is worth leaving out;
 - an option that does not add them (`Don't add`).
 
-Recommend `Don't add` first when a change is derivable or belongs in an existing place; otherwise `Approve` first. Repeat the line the hook prints after the answer. In a client with no structured question tool, ask in chat: he approves by replying "approve schema", which approves what the hook last blocked, so ask that way only for a branch the hook just stopped.
+Recommend `Don't add` first when a change is derivable or belongs in an existing place; otherwise `Approve` first. Repeat the line the hook prints after the answer. Never ask him to type an approval phrase.

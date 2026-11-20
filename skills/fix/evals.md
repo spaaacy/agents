@@ -81,7 +81,7 @@ Open with one line: `<#pr | nightly <date>>: <n> reds · <n> yours · <n> spec c
    Plan: <fix the change: … | re-spec the scenario | fix the expectation (prove with trials) | propose a standing red + the owning ticket | trials + floor from the numbers | fix the harness | rerun once>
 ```
 
-Then **Not verified** (cells not measured locally and why, inferences, steps CI skipped). Then ask with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options), in one call, and only when there is something to ask: one question per product call (what the agent should say or do when the prompt and the scenario disagree and the ticket does not settle it), and, outside PR mode only, one multi-select question listing the cells proposed as standing reds (a cell is added only when it is picked there or named in chat; the default is none). Wait for those answers, then go on to step 2; with nothing to ask, go on to step 2 straight away.
+Then **Not verified** (cells not measured locally and why, inferences, steps CI skipped). Then ask with the client's structured question tool (Claude Code: `AskUserQuestion`; Codex: `request_user_input`; otherwise a numbered list in chat with lettered options), in one call, and only when there is something to ask: one question per product call (what the agent should say or do when the prompt and the scenario disagree and the ticket does not settle it), and, outside PR mode only, one multi-select question listing the cells proposed as standing reds (a cell is added only when it is picked there or named in chat; the default is none). Wait for those answers, then go on to step 2; with nothing to ask, go on to step 2 straight away.
 
 ## Step 2: fix
 

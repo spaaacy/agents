@@ -87,16 +87,39 @@ def ensure_writable_root(text: str, root: str) -> str:
     return candidate
 
 
-def add_to_section(text: str, key: str, value) -> str:
-    """Add a key the sandbox section does not have yet, right under its header."""
+def add_to_section(text: str, key: str, value, section: str = SANDBOX) -> str:
+    """Add a key a section does not have yet, right under its header."""
     expected = deepcopy(tomllib.loads(text))
-    expected[SANDBOX][key] = value
-    header = re.search(rf"(?m)^[ \t]*\[{SANDBOX}\][ \t]*(#.*)?\n", text)
+    expected[section][key] = value
+    header = re.search(rf"(?m)^[ \t]*\[{re.escape(section)}\][ \t]*(#.*)?\n", text)
     if header is None:
-        raise ValueError(f"Cannot safely add {SANDBOX}.{key}")
+        raise ValueError(f"Cannot safely add {section}.{key}")
     candidate = text[:header.end()] + f"{key} = {json.dumps(value)}\n" + text[header.end():]
     if tomllib.loads(candidate) != expected:
-        raise ValueError(f"Cannot safely add {SANDBOX}.{key}")
+        raise ValueError(f"Cannot safely add {section}.{key}")
+    return candidate
+
+
+def ensure_feature(text: str, key: str, value) -> str:
+    """Set one [features] switch, adding the key or the section when missing."""
+    config = tomllib.loads(text)
+    features = config.get("features")
+    if features is not None:
+        if features.get(key) == value:
+            return text
+        if key in features:
+            return edit_setting(text, key, value, section="features")
+        return add_to_section(text, key, value, section="features")
+    expected = deepcopy(config)
+    expected["features"] = {key: value}
+    block = f"[features]\n{key} = {json.dumps(value)}\n\n"
+    marker = text.find("# BEGIN agents-managed")
+    if marker >= 0:
+        candidate = text[:marker] + block + text[marker:]
+    else:
+        candidate = text + ("\n" if text and not text.endswith("\n") else "") + ("\n" if text else "") + block
+    if tomllib.loads(candidate) != expected:
+        raise ValueError(f"Cannot safely add features.{key}")
     return candidate
 
 
@@ -124,6 +147,9 @@ def merge(text: str) -> str:
     if "project_doc_max_bytes" not in config:
         text = edit_setting(text, "project_doc_max_bytes", 131072)
     text = edit_setting(text, "skills", REMOVE, section="features")
+    # The question tool (request_user_input) is Plan-mode only by default. Aakif's sign-offs (a schema change,
+    # a ticket create) go through it, so it is on in Default mode too.
+    text = ensure_feature(text, "default_mode_request_user_input", True)
     text = ensure_writable_root(text, WORKTREES)
     text = ensure_network_access(text)
     tomllib.loads(text)

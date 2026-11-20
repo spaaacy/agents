@@ -14,11 +14,13 @@ One script, three entry points:
     against origin/development (a commit reads the whole worktree, untracked files included, because
     `git add x && git commit` stages in the same command);
   * any write to the approvals folder: an agent never approves for him.
-- PostToolUse on AskUserQuestion (`--record`): a question headed "Schema" that he answered with an option
-  whose label starts with "Approve" records the changes that option's preview diagram lists, for the
-  branch the diagram names (format: ~/.agents/skills/db-diff/diagram.md).
-- UserPromptSubmit (`--prompt`): him typing "approve schema" approves the newest pending request; that is
-  how a client with no structured question tool (Codex) records his yes.
+- PostToolUse on the question tool (`--record`; Claude Code's AskUserQuestion, Codex's request_user_input):
+  a question headed "Schema" that he answered with an option whose label starts with "Approve" records the
+  changes its diagram lists (the option's preview, else the question text), for the branch the diagram
+  names (format: ~/.agents/skills/db-diff/diagram.md). An answer it cannot read is kept in
+  unread-answers.jsonl beside the approvals.
+- UserPromptSubmit (`--prompt`): him typing "approve schema" approves the newest pending request. Agents
+  never ask for it (they use the question tool); it is his own shortcut.
 
 Only new and dropped tables and columns (and renames, which drop one name and add another) need approval;
 indexes, constraints, type changes and enum values do not. Anything it cannot read is let through, as
@@ -327,15 +329,17 @@ def refuse(repo: str, branch: str, missing: list[str], cwd: str | None) -> int:
     return deny(
         f"Blocked by ~/.agents/hooks/schema-guard.py: branch {branch} ({repo}) has database changes Aakif has "
         f"not approved: {listed}. A new or dropped table or column is his call, like a product change "
-        "(`Working style` in ~/.agents/AGENTS.md). Ask him now, in a structured question of its own "
-        "(Claude Code: AskUserQuestion): header \"Schema\", the question saying why each one has to be stored "
+        "(`Working style` in ~/.agents/AGENTS.md). Stop and ask him now with your structured question tool: "
+        "AskUserQuestion in Claude Code, request_user_input in Codex. It is a product decision he asks to be "
+        "given as a question, not a permission request; never ask him to type a phrase, and never put it inside "
+        "a status update. The question gets header \"Schema\" and says, per change, why it has to be stored "
         "(what writes it, what reads it, why it cannot be worked out from data already stored or kept in an "
-        "existing settings group or row), an option labelled \"Approve\" whose preview is the diagram in "
-        f"~/.agents/skills/db-diff/diagram.md (first line `branch: {branch}`), and an option that does not add "
-        "them. In a client with no structured question tool, ask in chat; he approves by replying "
-        "\"approve schema\". Retry once he has approved. If these came from development rather than this "
-        "branch, run `git fetch origin development` and retry. A run with nobody to ask stops here and "
-        "reports what it would add."
+        "existing settings group or row). Options: one labelled \"Approve\" and one that does not add them. "
+        f"The diagram from ~/.agents/skills/db-diff/diagram.md (first line `branch: {branch}`) goes in the "
+        "Approve option's preview (AskUserQuestion) or at the end of the question text (request_user_input, "
+        "whose options have no preview): the hook records exactly what that diagram lists. Retry once he has "
+        "approved. If these came from development rather than this branch, run `git fetch origin development` "
+        "and retry. A run with nobody to ask stops here and reports what it would add."
     )
 
 
@@ -444,7 +448,8 @@ def writes_approvals(cmd: str) -> bool:
         while i < len(seg) and os.path.basename(seg[i]) in shell.WRAPPERS:
             i += 1
         prog = os.path.basename(seg[i]) if i < len(seg) else ""
-        redirected = any(t in {">", ">>"} for t in seg)
+        redirected = any(tok in {">", ">>"} and i + 1 < len(seg) and "schema-approvals" in seg[i + 1]
+                         for i, tok in enumerate(seg))
         if prog not in READ_ONLY or redirected:
             return True
     return False
@@ -495,35 +500,86 @@ def context(event_name: str, text: str) -> int:
     return 0
 
 
+def _first_label(value) -> str | None:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list) and value:
+        return _first_label(value[0])
+    if isinstance(value, dict):
+        for key in ("answers", "answer", "label", "selected"):
+            if key in value:
+                return _first_label(value[key])
+    return None
+
+
 def _answers(event: dict) -> dict[str, str]:
+    """Question text or id -> the label he picked, from either client's payload."""
+    found: dict[str, str] = {}
     for source in (event.get("tool_input"), event.get("tool_response")):
+        if isinstance(source, str):
+            try:
+                source = json.loads(source)
+            except ValueError:
+                found.update(dict(re.findall(r'"([^"]+)"="([^"]+)"', source)))
+                continue
         if isinstance(source, dict) and isinstance(source.get("answers"), dict):
-            return {str(k): str(v) for k, v in source["answers"].items()}
-    response = event.get("tool_response")
-    text = response if isinstance(response, str) else json.dumps(response) if response is not None else ""
-    return dict(re.findall(r'"([^"]+)"="([^"]+)"', text))
+            for key, value in source["answers"].items():
+                label = _first_label(value)
+                if label:
+                    found[str(key)] = label
+    return found
 
 
 def record_question(event: dict) -> int:
     tin = event.get("tool_input") or {}
+    if isinstance(tin, str):
+        try:
+            tin = json.loads(tin)
+        except ValueError:
+            return 0
+    questions = [q for q in tin.get("questions") or []
+                 if isinstance(q, dict) and str(q.get("header", "")).strip().lower() == "schema"]
+    if not questions:
+        return 0
     answers = _answers(event)
     notes = []
-    for q in tin.get("questions") or []:
-        if not isinstance(q, dict) or str(q.get("header", "")).strip().lower() != "schema":
+    for q in questions:
+        label = answers.get(str(q.get("question", ""))) or answers.get(str(q.get("id", "")))
+        if not label:
+            _keep_unread(event)
+            notes.append("Could not read Aakif's answer to the schema question, so nothing was recorded.")
             continue
-        label = answers.get(q.get("question", ""))
-        if not label or not label.strip().lower().startswith("approve"):
+        if not label.strip().lower().startswith("approve"):
             notes.append("Aakif did not approve the schema change in that question: do not add it.")
             continue
-        option = next((o for o in q.get("options") or [] if isinstance(o, dict) and o.get("label") == label), {})
-        branch, repo, changes = parse_diagram(str(option.get("preview") or ""))
+        option = next((o for o in q.get("options") or []
+                       if isinstance(o, dict) and str(o.get("label", "")).strip() == label.strip()), {})
+        branch, repo, changes = None, REPO, []
+        for text in (option.get("preview"), option.get("description"), q.get("question")):
+            if text:
+                branch, repo, changes = parse_diagram(str(text))
+                if branch and changes:
+                    break
         if not branch or not changes:
-            notes.append("The Approve option's preview had no readable diagram (needs a `branch:` line and the "
-                         "tables per ~/.agents/skills/db-diff/diagram.md), so nothing was recorded.")
+            notes.append("No readable diagram (a `branch:` line and the tables per "
+                         "~/.agents/skills/db-diff/diagram.md) in the Approve option's preview or the question, "
+                         "so nothing was recorded.")
             continue
-        record(repo, branch, changes, "AskUserQuestion", event.get("session_id"))
+        record(repo, branch, changes, str(event.get("tool_name") or "question"), event.get("session_id"))
         notes.append(f"Recorded Aakif's approval on {branch}: {'; '.join(changes)}.")
     return context("PostToolUse", " ".join(notes)) if notes else 0
+
+
+def _keep_unread(event: dict) -> None:
+    """A schema answer the hook could not read is kept, so the reader can be fixed to the client's shape."""
+    try:
+        STATE.mkdir(parents=True, exist_ok=True)
+        with (STATE / "unread-answers.jsonl").open("a") as out:
+            out.write(json.dumps({"at": time.time(), "tool_name": event.get("tool_name"),
+                                  "tool_input": event.get("tool_input"),
+                                  "tool_response": event.get("tool_response")}, default=str) + "\n")
+    except OSError:
+        pass
 
 
 def record_prompt(event: dict) -> int:

@@ -74,7 +74,7 @@ Two failed attempts on the same check means stop fixing that check and report wh
 
 ## 5. Things this skill does not do
 
-Never merge (see the top). Never weaken a test, an eval, a baseline, a coverage floor, a lint rule, or a type ignore to pass. Never change product behaviour, prompts, or copy to satisfy a check, except through the eval fix in `evals.md`. Never comment on or edit the PR body, request reviewers, or re-request review. Never push to any branch but the PR's head. Never run `az`. When a decision is the author's, put it under `needs you:` and keep working what can still be worked; only when nothing is left to do until they answer does the tick end by asking it with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options), the recommended option first.
+Never merge (see the top). Never weaken a test, an eval, a baseline, a coverage floor, a lint rule, or a type ignore to pass. Never change product behaviour, prompts, or copy to satisfy a check, except through the eval fix in `evals.md`. Never comment on or edit the PR body, request reviewers, or re-request review. Never push to any branch but the PR's head. Never run `az`. When a decision is the author's, put it under `needs you:` and keep working what can still be worked; only when nothing is left to do until they answer does the tick end by asking it with the client's structured question tool (Claude Code: `AskUserQuestion`; Codex: `request_user_input`; otherwise a numbered list in chat with lettered options), the recommended option first.
 
 ## 6. Report
 

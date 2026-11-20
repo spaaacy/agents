@@ -49,6 +49,17 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.agents/hooks/schema-guard.py --record",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

@@ -82,7 +82,7 @@ Once the report is out, save it to the on-call notebook, with no question: the a
 
 ## Then ask about the follow-ups
 
-One structured question (Claude Code: `AskUserQuestion`, multi-select; otherwise a numbered list with lettered options), carrying only the options that apply, the recommended ones first:
+One structured question (Claude Code: `AskUserQuestion`, multi-select; Codex: `request_user_input`; otherwise a numbered list with lettered options), carrying only the options that apply, the recommended ones first:
 - `/tune-monitor <file>` for each alert classed as a false alarm: one run per monitor, each its own draft PR. Recommend these only once the fire is out, and never offer one for a monitor that is catching a real fault.
 - A Linear ticket for each real fault with no open ticket, the draft in the option's preview (title, what broke, the evidence, the suspected cause, the fix, the assignee); picking it is the approval to create it, per `Working style` in `~/.agents/AGENTS.md`. A fault with an open ticket gets a comment option with today's evidence instead.
 - Start the incident report under `monitoring/incidents/`, for a fault customers felt, or a page that needs a code fix to stop: `INC-YYYY-MMDD-NN-<slug>.md` in the shape `monitoring/README.md` names, on a branch off `development` in a worktree, as a draft PR. The backend `CLAUDE.md` wants it started while the incident is live.

@@ -29,7 +29,7 @@ For each ticket:
 3. A ticket only moves forward, never back. If Linear already shows the computed state or a later one, list it as "already right".
 4. Multi-repo tickets move to the state of the repo that is furthest BEHIND (a backend PR in production with the web PR still in staging is Staging, not Done).
 
-Print one table: key, title (short), Linear state now, computed state, evidence (the PR numbers and the branch that contains them, plus the promotion PR date for production), then the count of moves, and go on to phase 2 with no go to wait for. The one exception is `all`: tickets assigned to someone else are moved only after asking with the client's structured question tool (Claude Code: `AskUserQuestion`; otherwise a numbered list in chat with lettered options): move all of them (Recommended), move only the keys named, or move nothing.
+Print one table: key, title (short), Linear state now, computed state, evidence (the PR numbers and the branch that contains them, plus the promotion PR date for production), then the count of moves, and go on to phase 2 with no go to wait for. The one exception is `all`: tickets assigned to someone else are moved only after asking with the client's structured question tool (Claude Code: `AskUserQuestion`; Codex: `request_user_input`; otherwise a numbered list in chat with lettered options): move all of them (Recommended), move only the keys named, or move nothing.
 
 ## Phase 2: apply
 
