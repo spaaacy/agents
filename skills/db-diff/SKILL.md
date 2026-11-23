@@ -58,8 +58,8 @@ With `page`: also publish the report as an Artifact page (load the `artifact-des
 Only with a trailing `approve`, or when Aakif says approve after a report. Ask in one call of the client's structured question tool (Claude Code: `AskUserQuestion`; Codex: `request_user_input`), one question per branch (up to the tool's limit; the rest are asked next):
 
 - header `Schema` (the hook only records answers to questions with this header);
-- the question names the branch and says in one short sentence what the changes are for;
+- the question names the branch, then says per change what it adds for people (what a rep, carrier, customer or admin can see or do with it that they can't today, a concrete before and after; when nothing, say so), then why it has to be stored;
 - an option labelled `Approve`, its preview the branch's diagram with only the changes being asked about (in Codex, whose options have no preview, the diagram goes at the end of the question text) (the hook records exactly what that diagram lists, for its `branch:`); a second `Approve, ...` option with a smaller diagram when one change is worth leaving out;
 - an option that does not add them (`Don't add`).
 
-Recommend `Don't add` first when a change is derivable or belongs in an existing place; otherwise `Approve` first. Repeat the line the hook prints after the answer. Never ask him to type an approval phrase.
+Recommend `Don't add` first when a change is derivable, belongs in an existing place, or adds nothing a person would notice; otherwise `Approve` first. Repeat the line the hook prints after the answer. Never ask him to type an approval phrase.
