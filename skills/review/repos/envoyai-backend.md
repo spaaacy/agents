@@ -18,6 +18,7 @@ Wrong carrier-facing behavior; a prompt or tool change with no eval scenario in 
 
 ## Always check
 
+- The activity log is for people to read, never business state (ENG-2669): every row in it is shown on the load timeline, so nothing internal is written there, and no send, booking, collection, restoration or alert decision may depend on a timeline row. Domain records and database uniqueness own those decisions; display-only history deduplication is allowed. Writing an internal record to the activity log, or reading one back to decide something, is a finding: it belongs in a domain table.
 - A change to `_handle_carrier_response`, the voice session bootstrap, or tracking `handle_inbound` updates the mirroring adapter in `evals/harness/adapters/`.
 - New enum values ship an `ALTER TYPE ... ADD VALUE IF NOT EXISTS` migration; a value added and used in one migration recreates the type.
 - `scripts/check_single_migration_head.py` passes; a re-parented migration is called out in the PR body.
