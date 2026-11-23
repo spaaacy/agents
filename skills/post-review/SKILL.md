@@ -3,11 +3,15 @@ name: post-review
 description: Turn the most recent /review into a GitHub PR review (one summary comment plus inline comments), and post it. Running the skill is the go; it does not ask again.
 ---
 
-Target: the PR number or URL in $ARGUMENTS, else the PR the most recent /review in this conversation was run on. This needs a completed /review in the conversation; if there is none, say so and stop (do not run one silently).
+Target: the PR number or URL in $ARGUMENTS, else the PR the most recent /review in this conversation was run on. This needs a completed /review report in the conversation, including one loaded by /review from its saved record; if there is none, say so and stop (do not run one silently).
 
 Everything drafted here is read by another engineer on GitHub, so it is plain professional English regardless of any chat voice. Short, direct, no jargon, no severity theater, no "I verified by reading X", no restating the diff back to the author.
 
 Flow: `/review` found the findings; this posts them. The PR author's next step is `/address-review <pr>` (verify, then fix), then `/verify-fixes <pr>` in a fresh conversation; say that in the last line after posting. The same one-review posting shape (`gh api .../reviews --input review.json`, `COMMENT` only) is what `/verify-fixes` uses for its summaries, so a reader sees one voice across the whole review.
+
+## Before drafting: avoid duplicates
+
+Read the PR's existing reviews and comments before posting. Compare the reviewed head and substantive result: `<!-- review-skill head=<sha> -->` identifies a prior skill review; a `<!-- slack-pr-review:` review uses its `commit.oid`. If an existing review or comment already covers the same head and result, link it and stop without another post. A local review record alone is not a duplicate. New substantive findings can warrant another review on the same head; rewording the same result cannot. If a posting attempt has an uncertain outcome, re-read the PR before retrying. Apply this check separately to every targeted PR, including clean reviews.
 
 ## Step 1: draft
 
