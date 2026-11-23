@@ -159,6 +159,40 @@ class Repo(unittest.TestCase):
         self.assertIn("add column offer.held_at", self.pre({"tool_name": "Bash", "cwd": str(self.repo),
                                                              "tool_input": {"command": "git push"}}))
 
+    def pending_schema_merge(self, advance_development):
+        self.migration.write_text(ADD_COLUMN)
+        self.git("add", "alembic/versions/new.py")
+        self.git("commit", "-qm", "branch schema")
+        self.git("checkout", "-qb", "incoming", "origin/development")
+        incoming = self.repo / "alembic/versions/incoming.py"
+        incoming.write_text(ADD_COLUMN.replace('"held_at"', '"cargo_value"'))
+        self.git("add", "alembic/versions/incoming.py")
+        self.git("commit", "-qm", "incoming schema")
+        if advance_development:
+            self.git("update-ref", "refs/remotes/origin/development", "HEAD")
+        self.git("checkout", "aakif/eng-1-thing")
+        self.git("merge", "--no-commit", "--no-ff", "incoming")
+
+    def test_pending_development_merge_excludes_only_upstream_schema(self):
+        self.pending_schema_merge(advance_development=True)
+        self.assertEqual(guard.branch_changes(str(self.repo), whole_worktree=True),
+                         {"add column offer.held_at"})
+        extra = self.repo / "alembic/versions/local.py"
+        extra.write_text(ADD_COLUMN.replace('"held_at"', '"local_note"'))
+        self.assertEqual(guard.branch_changes(str(self.repo), whole_worktree=True),
+                         {"add column offer.held_at", "add column offer.local_note"})
+        self.assertEqual(guard.branch_changes(str(self.repo), whole_worktree=False),
+                         {"add column offer.held_at"})
+        reason = self.pre({"tool_name": "Bash", "cwd": str(self.repo),
+                           "tool_input": {"command": "git commit -m merge"}})
+        self.assertIn("add column offer.local_note", reason)
+        self.assertNotIn("cargo_value", reason)
+
+    def test_pending_feature_merge_still_requires_schema_approval(self):
+        self.pending_schema_merge(advance_development=False)
+        self.assertEqual(guard.branch_changes(str(self.repo), whole_worktree=True),
+                         {"add column offer.held_at", "add column offer.cargo_value"})
+
     def test_codex_patch(self):
         patch = ("*** Begin Patch\n*** Add File: alembic/versions/new.py\n"
                  + "".join(f"+{line}\n" for line in ADD_COLUMN.splitlines()) + "*** End Patch\n")

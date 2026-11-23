@@ -278,13 +278,31 @@ def checkout_of(path: str | Path) -> tuple[str, str, str] | None:
     return top.strip(), repo, branch
 
 
-def branch_changes(top: str, whole_worktree: bool) -> set[str] | None:
-    """What the branch adds or drops against origin/development: committed work for a push; for a commit,
-    everything in the worktree (committed, staged, changed and untracked)."""
+def comparison_base(top: str, whole_worktree: bool) -> str | None:
+    """Include an incoming merge parent's development history for an uncommitted tree."""
     base = git(top, "merge-base", "HEAD", BASE)
     if not base:
         return None
     base = base.strip()
+    if whole_worktree:
+        # HEAD still precedes an in-progress merge of development. Its incoming
+        # migrations are already approved on development, not new PR schema.
+        # A feature merge advances this only as far as history shared with BASE.
+        for parent in (git(top, "rev-parse", "--verify", "MERGE_HEAD") or "").split():
+            candidate = git(top, "merge-base", parent, BASE)
+            if candidate:
+                candidate = candidate.strip()
+                if git(top, "merge-base", "--is-ancestor", base, candidate) is not None:
+                    base = candidate
+    return base
+
+
+def branch_changes(top: str, whole_worktree: bool) -> set[str] | None:
+    """What the branch adds or drops against origin/development: committed work for a push; for a commit,
+    everything in the worktree (committed, staged, changed and untracked)."""
+    base = comparison_base(top, whole_worktree)
+    if not base:
+        return None
     if whole_worktree:
         names = (git(top, "diff", "--name-only", "--diff-filter=AMR", base, "--", MIGRATIONS) or "").split()
         names += (git(top, "ls-files", "--others", "--exclude-standard", "--", MIGRATIONS) or "").split()
@@ -609,7 +627,7 @@ def list_checkout(path: str, committed: bool) -> int:
         return 1
     top, repo, branch = found
     changes = branch_changes(top, whole_worktree=not committed)
-    base = (git(top, "merge-base", "HEAD", BASE) or "").strip() or None
+    base = comparison_base(top, whole_worktree=not committed)
     print(json.dumps({
         "dir": top, "repo": repo, "branch": branch, "base": base,
         "changes": sorted(changes or []), "approved": sorted(approved(repo, branch)),
