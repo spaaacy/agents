@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Merge claude/settings.hooks.json and claude/permissions.json into ~/.claude/settings.json.
-Union semantics: never removes anything already there; hooks deduped by command, rules by string."""
+"""Merge claude/settings.hooks.json, claude/permissions.json and claude/settings.env.json into ~/.claude/settings.json.
+Union semantics: never removes anything already there; hooks deduped by command, rules by string, env keys set."""
 import json, os
 HERE = os.path.dirname(os.path.abspath(__file__))
 path = os.path.expanduser("~/.claude/settings.json")
@@ -13,6 +13,11 @@ for event, entries in hooks.items():
     for e in entries:
         if not all(h["command"] in have for h in e["hooks"]):
             cur.append(e)
+
+# Every subagent runs on the session's model (CLAUDE_CODE_SUBAGENT_MODEL_FORCE, Aakif 2026-11-24); a subagent on the
+# session's model runs at the session's effort as long as nothing passes one.
+env = json.load(open(os.path.join(HERE, "settings.env.json")))["env"]
+s.setdefault("env", {}).update(env)
 
 perms = json.load(open(os.path.join(HERE, "permissions.json")))["permissions"]
 p = s.setdefault("permissions", {})
