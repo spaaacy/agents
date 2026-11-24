@@ -1,6 +1,6 @@
 ---
 name: impact
-description: Show what a pull request (or every open PR for a Linear ticket) delivers from the product side, as one page - what changes for carriers, customers, reps and admins, the defaults and switches, who is left out, what it takes to ship, real screenshots of every screen or email it changes (before and after), and a diagram of its new tables and columns - with no code or jargon in the words. Read-only on the repos. `text` gives the short chat summary only; `schema` only the database diagram. Use when the user asks what a PR delivers, for a product summary or TL;DR of a PR, what a change means for users, what it looks like, or to see a PR's schema or database changes.
+description: Show what a pull request (or every open PR for a Linear ticket) delivers from the product side, as one page - what changes for carriers, customers, reps and admins, the defaults and switches, who is left out, what it takes to ship, real screenshots of every screen or email it changes (before and after), and a diagram of its new tables and columns - with no code or jargon in the words. Read-only on the repos. `text` gives the short chat summary only; `schema` only the database diagram. Run again on the same PR, it reports only what changed since the last run. Use when the user asks what a PR delivers, for a product summary or TL;DR of a PR, what a change means for users, what it looks like, or to see a PR's schema or database changes.
 ---
 
 Target: $ARGUMENTS. A PR number or URL is that PR; a Linear key (`ENG-1234`) or URL means every open PR for that ticket across the repos. A bare number is looked up in the current repo first, then `envoyai-web`, `envoyai-chrome-plugin`, `envoyai-chat-ui` (backend PRs are in the 2000s, the others are lower; never guess across repos, ask if two match). Nothing means the PR or ticket this conversation is about (`Shared skill arguments` in `~/.agents/AGENTS.md`), else the open PR for the current branch; if there is none, ask which PR with the client's structured question tool and stop.
@@ -74,13 +74,23 @@ Only backend PRs carry migrations; for a ticket, draw each of its backend PRs. N
 
 In Claude Code, publish one Artifact page per run (load the `artifact-design` skill first, as the Artifact tool requires), written to the scratchpad as `impact-<repo>-<pr>.html` (`impact-<KEY>.html` for a ticket) so running this again in the same conversation updates the same page. Screenshots go in as `data:` PNG URIs (keep the page under the 16MB limit: scope screenshots to what changed). Sections, top to bottom:
 
-- Header: `#<n> <title>` linked to the PR (every PR for a ticket), open, draft or merged, the ticket, and the one-sentence summary.
+- Header: `#<n> <title>` linked to the PR (every PR for a ticket), open, draft or merged, the head commit it was written at (short sha), the ticket, and the one-sentence summary.
+- Since the last version (a run again only, below): the differences from the earlier run, as a short box under the header.
 - What changes: the bullets above, grouped by who notices, then Defaults, Left out and Shipping as their own short lines.
 - What it looks like: each change's screenshot, before and after side by side when the screen existed (stacked on a phone), with its label and "example data"; emails and messages as rendered. Left out when nothing visible changes.
 - The database: the header counts ("2 new tables · 5 new columns · 1 column removed") and the migration revision, then one card per table, new tables first, then existing tables gaining columns, then anything dropped. A new table's card lists every column; an existing table's shows its id, the new columns, and the columns they sit beside or point at, with the rest folded behind "N other existing columns". Each column on one row: name, type, required or optional, default, the table it points at ("→ load.id"), and what it holds underneath; new columns stand out (an added marker and colour), removed ones are struck through, existing ones are muted; a JSON column lists the keys it holds. Then the new links between tables ("offer.accepted_by_user_id → user.id") and the "also:" line.
 - Not shown: screens that could not be captured and why, and anything inferred rather than read.
 
 In chat, alongside the link: the one-sentence summary and the bullets, cut to the five that matter most, and one line on what the page shows ("before/after of the Offers panel and the award email, 2 new columns").
+
+## Run again on the same PR
+
+When this conversation already has an impact for the same PR or ticket (an earlier run's chat summary, or its page in the scratchpad), the run reports only what changed since that run, never the whole thing again:
+
+- Compare the new words against what the earlier run said (its bullets, examples, messages, database section, Defaults, Left out and Shipping), not against the code, and name both head commits.
+- Chat: the first line names the PR and the two heads (`#3191 since the last /impact (7810fbf → beb8f69)`), then one bullet per difference, starting with what happened to it: Added, Dropped (with why, e.g. "now matches production"), or Changed (old → new in a few words). Defaults, Data changes and Shipping appear only when they changed. When nothing changed for people, say so in one line. Unchanged bullets are never restated.
+- The page: still the full current picture, updated in place at the same URL (it is the reference people share), with the same differences in a "Since the last version" box under the header, naming both heads.
+- `text` mode follows the same rule. A conversation with no earlier run for this PR or ticket is a first run.
 
 Without an Artifact tool (Codex, or when publishing is refused): the full bullets in chat, the database as a text diagram in one code block (a box per table, as below), and the screenshots saved under `~/.agents/state/impact/<repo>-<pr>/` with their paths listed, one line each with its label.
 
