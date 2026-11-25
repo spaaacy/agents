@@ -1,11 +1,11 @@
 ---
 name: screenshots
-description: Capture real screenshots of what a frontend pull request (envoyai-web, envoyai-chrome-plugin, envoyai-chat-ui) changes on screen, rendered by the PR's own code with example data, before and after; post them on the PR's Linear ticket and point the PR body's Screenshots section at them. Runs on its own at the end of /pickup and of an /address-review round that changed the UI. Use when the user asks for screenshots on a PR, or to add or refresh them.
+description: Capture real screenshots of what a frontend pull request (envoyai-web, envoyai-chrome-plugin, envoyai-chat-ui) changes on screen, rendered by the PR's own code with example data, before and after; post them on the PR's Linear ticket, point the PR body's Screenshots section at them, and copy them to ~/Downloads for Aakif to drop into the PR description himself. Runs on its own at the end of /pickup and of an /address-review round that changed the UI. Use when the user asks for screenshots on a PR, or to add or refresh them.
 ---
 
 Target: $ARGUMENTS. A PR number or URL is that PR; a Linear key (`ENG-1234`) or URL means every open frontend PR for that ticket. A bare number is looked up in `envoyai-web`, then `envoyai-chrome-plugin`, then `envoyai-chat-ui` (ask if two match). Nothing means the PR this conversation is about (`Shared skill arguments` in `~/.agents/AGENTS.md`). A backend PR has no screens here: say so and stop.
 
-Flow: `/pickup` runs this right after it opens a frontend draft PR, and `/address-review` after a round that changed something on screen; `/impact` uses its Capture section for its page. Its only writes are one comment on the PR's Linear ticket (a comment needs no approval) and the PR body's Screenshots section. Screenshots are never committed or pushed anywhere, not to a checkout, the PR branch or any other branch (Aakif's call, 2026-11-17): the ticket holds them. Anything posted is plain professional English whatever the chat voice.
+Flow: `/pickup` runs this right after it opens a frontend draft PR, and `/address-review` after a round that changed something on screen; `/impact` uses its Capture section for its page. Its only writes are one comment on the PR's Linear ticket (a comment needs no approval), the PR body's Screenshots section, and a local copy of the files in `~/Downloads/pr-screenshots/`. Screenshots are never committed or pushed anywhere, not to a checkout, the PR branch or any other branch (Aakif's call, 2026-11-17). The team wants every PR description to carry that PR's own images, not only a link to the ticket (Myles and Saumil, 2026-11-25), and GitHub cannot show Linear's images (they need a Linear login), so Aakif uploads them to the PR description by hand: this skill puts the files in Downloads and its report reminds him (his call, 2026-11-25). Anything posted is plain professional English whatever the chat voice.
 
 ## Which screens
 
@@ -63,10 +63,17 @@ The comment URL is the one `save_comment` returns, else the issue URL plus `#com
 
 Without a Linear upload tool (a client whose Linear tools are read-only), keep the files, list their paths, and say the ticket and the body were not updated.
 
+## Hand them over for the PR description
+
+Copy every PNG this PR's comment shows into `~/Downloads/pr-screenshots/<repo>-<pr>/` (for example `envoyai-web-1024`), keeping the captured names so they sort in the order the comment shows them. A later run empties that folder first, so it only ever holds the current set. Several PRs on one ticket each get their own folder with their own images, even when they share screens (a chat-ui component shown through the web page goes in both the chat-ui and the extension folder). A PR with "No visible change." gets no folder.
+
 ## Report
 
 ```
 #<pr> screenshots — <n> posted on <KEY> (<comment url>)
 - <label>: before + after | after only | not shown (<why>)
 body: Screenshots section added | updated | "No visible change."
+downloads: ~/Downloads/pr-screenshots/<repo>-<pr>/ (<n> files)
 ```
+
+End the reply to Aakif with the reminder, one line per PR: drag the files in `~/Downloads/pr-screenshots/<repo>-<pr>/` into #<pr>'s description on GitHub, under its Screenshots heading.
